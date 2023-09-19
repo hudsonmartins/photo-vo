@@ -18,17 +18,12 @@ from dataset import MegaDepthDataset
 from models.superpoint import SuperPoint
 from models.superglue import SuperGlue
 from models.motion_estimator import MotionEstimator
-
-#from models.monodepth2 import MonoDepth
 from loss import nll_loss, patches_photometric_loss, pose_error
-from models.utils import make_matching_plot_fast
 from ground_truth import get_ground_truth, get_patches_points, warp_patches, get_pixels_from_pts
 from utils import *
 
-matplotlib.use('TkAgg')
-
 IMAGE_SIZE = 720
-MAX_KPTS = 50
+MAX_KPTS = 400
 PATCH_SIZE = 10
 
 def train(lr, num_epochs, save_every, pos_weight, neg_weight, train_dataloader, validation_dataloader, 
@@ -56,8 +51,6 @@ def train(lr, num_epochs, save_every, pos_weight, neg_weight, train_dataloader, 
         optimizer.load_state_dict(optimizer_state)
         print('starting from epoch ', start_epoch)
         print('starting from step ', start_step)
-
-        
     
     for param in superpoint.parameters():
         param.requires_grad = False
