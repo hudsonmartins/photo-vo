@@ -3,11 +3,9 @@ import sys
 import torch
 import argparse
 import multiprocessing
-import matplotlib
 import numpy as np
 from tqdm import tqdm
 from skimage import io
-import matplotlib.cm as cm
 import torch.optim as optim
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
@@ -330,7 +328,7 @@ def train(lr, num_epochs, save_every, pos_weight, neg_weight, train_dataloader, 
 def main(lr, batch_size, num_epochs, save_every, dataset_path, train_scenes_path, 
         load_model_path, valid_scenes_path, logs_dir, max_iter,
         checkpoints_path, save_dataset_path, load_dataset_from_file,
-        pos_weight, neg_weight, only_val):
+        pos_weight, neg_weight, match_weight, vo_weight, photo_weight, only_val):
         
     os.makedirs(logs_dir, exist_ok=True)
     os.makedirs(checkpoints_path, exist_ok=True)
@@ -386,7 +384,8 @@ def main(lr, batch_size, num_epochs, save_every, dataset_path, train_scenes_path
     
     train(lr, num_epochs, save_every, pos_weight, neg_weight, 
           train_dataloader, validation_dataloader, load_model_path,
-          max_iter, checkpoints_path, config, device, writer, 
+          max_iter, checkpoints_path, config, device, writer,
+          match_weight, photo_weight, vo_weight,
           only_val)
 
 
@@ -405,8 +404,11 @@ if __name__ == '__main__':
     parser.add_argument("--batch_size", default=32, type=int, help="Batch Size")
     parser.add_argument("--num_epochs", default=100, type=int, help="Path to logs")
     parser.add_argument("--save_every", default=200, type=int, help="Save model after this number of iterations")
-    parser.add_argument("--pos_weight", default=0.5, type=float, help="Weight to compute loss in positive samples")
-    parser.add_argument("--neg_weight", default=0.5, type=float, help="Weight to compute loss in negative samples")
+    parser.add_argument("--pos_weight", default=0.5, type=float, help="Weight to compute matching loss in positive samples")
+    parser.add_argument("--neg_weight", default=0.5, type=float, help="Weight to compute matching loss in negative samples")
+    parser.add_argument("--match_weight", default=0.4, type=float, help="Weight of the matching loss to the total loss")
+    parser.add_argument("--vo_weight", default=0.3, type=float, help="Weight of the VO loss to the total loss")
+    parser.add_argument("--photo_weight", default=0.3, type=float, help="Weight of the photometric loss to the total loss")
     parser.add_argument("--only_val", action='store_true')
 
     args = parser.parse_args()
@@ -415,4 +417,5 @@ if __name__ == '__main__':
          args.dataset_path, args.train_scenes_path, args.load_model_path, 
          args.valid_scenes_path, args.logs_dir, args.max_iter, args.checkpoints_path, 
          args.save_dataset_path, args.load_dataset_from_file,
-         args.pos_weight, args.neg_weight, args.only_val)
+         args.pos_weight, args.neg_weight, args.match_weight, args.vo_weight, 
+         args.photo_weight, args.only_val)
