@@ -8,7 +8,7 @@ from gluefactory.models import get_model
 from gluefactory.visualization.viz2d import plot_heatmaps, plot_image_grid
 from gluefactory.utils.experiments import get_best_checkpoint, get_last_checkpoint, save_experiment
 from gluefactory.utils.tensor import batch_to_device
-from utils import draw_kpts, get_patches
+from utils import draw_pts, get_patches, draw_patches
 
 
 default_train_conf = {
@@ -51,7 +51,8 @@ def main(args):
     logger.info('Training with the following configuration: ')
     conf = OmegaConf.load(args.conf)
     logger.info(conf.data)
-    device ="cpu"# "cuda" if torch.cuda.is_available() else "cpu"
+    
+    device = "cuda" if torch.cuda.is_available() and args.use_cuda else "cpu"
     logger.info(f"Using device {device}")
     
     if args.restore:
@@ -101,7 +102,6 @@ def main(args):
         images, depths, images_kpts = [], [], []
         
 
-
     model = get_model(conf.model.name)(conf.model).to(device)
     if args.compile:
         model = torch.compile(model, mode=args.compile)
@@ -114,10 +114,11 @@ def main(args):
 
     for it, data in enumerate(train_loader):
         data = batch_to_device(data, device, non_blocking=True)
+        
         pred = model(data)
-        #pred contains 'keypoints0' 'keypoints1' 'descriptors0' 'descriptors1'
 
-        if(args.debug and it < 4):
+
+        if(args.debug and it < 1):
             images.append(
                 [
                     data[f"view{i}"]["image"][0].permute(1, 2, 0)
@@ -125,16 +126,30 @@ def main(args):
                 ]
             )
 
+            images_kpts.append(
+                [
+                    draw_patches(
+                        data[f"view{i}"]["image"][0].permute(1, 2, 0).cpu().numpy()*255,
+                        pred[f"keypoints{i}"][0].cpu().numpy()[:500],
+                    )
+                    for i in range(dataset.conf.views)
+                ]
+            )
+
             depths.append(
                 [data[f"view{i}"]["depth"][0] for i in range(dataset.conf.views)]
             )
+        break
             
             
     if(args.debug):
-        axes = plot_image_grid(images, dpi=100)
-        for i in range(len(images)):
+        #axes = plot_image_grid(images, dpi=100)
+        
+        #draw imgs_keypoints
+        axes = plot_image_grid(images_kpts, dpi=100)
+        for i in range(len(images_kpts)):
             plot_heatmaps(depths[i], axes=axes[i])
-        plt.show()     
+        plt.show() 
 
     
 
@@ -144,6 +159,7 @@ if __name__ == "__main__":
     parser.add_argument("--conf", type=str)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--restore", action="store_true")
+    parser.add_argument("--use-cuda", action="store_true")
     parser.add_argument(
         "--compile",
         default=None,

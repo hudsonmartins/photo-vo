@@ -1,13 +1,33 @@
 import torch
+import cv2
+import numpy as np
 
-def draw_kpts(img, kpts, color=(0, 0, 255), radius=5):
-    """Draw keypoints on an image"""
+
+    
+def draw_patches(img, kpts, patch_size=10):
+    """Draw patches around keypoints on an image"""
+    half = patch_size // 2
     for pt in kpts:
-        img = cv2.circle(img, (pt[0], pt[1]), radius, color, 2)
+        img = cv2.rectangle(
+            np.ascontiguousarray(img).astype(np.uint8),
+            (int(pt[0]) - half, int(pt[1]) - half),
+            (int(pt[0]) + half, int(pt[1]) + half),
+            (0, 0, 255),
+            2,
+        )
     return img
 
-def get_patches(img, kpts, patch_size=10):
-    """Given an image and a set of keypoints, return the patches around the keypoints"""
+
+def draw_pts(img, pts, color=(0, 0, 255), radius=5):
+    """Draw points on an image"""
+    for pt in pts:
+        img = cv2.circle(np.ascontiguousarray(img).astype(np.uint8), (int(pt[0]), int(pt[1])), radius, color, 2)
+    return img
+
+
+
+def get_patches(img, pts, patch_size=10):
+    """Given an image and a set of points, return the patches around the points"""
 
     batch_size = img.size(0)
     patch_size = int(patch_size)
@@ -17,10 +37,10 @@ def get_patches(img, kpts, patch_size=10):
         #pad image 
         img_pad = torch.nn.functional.pad(img[i], (half, half, half, half), mode='reflect')
         print('image after padding ', img_pad.size())
-        kpts_i = kpts[i]
+        pts_i = pts[i]
         patches_i = []
-        for j in range(kpts_i.size(0)):
-            x, y = kpts_i[j].int()
+        for j in range(pts_i.size(0)):
+            x, y = pts_i[j].int()
             print('x, y ', x, y)
             
             patch = img_pad[..., y:y+patch_size, x:x+patch_size]
@@ -31,7 +51,6 @@ def get_patches(img, kpts, patch_size=10):
 
 
 if __name__ == "__main__":
-    import cv2
     import matplotlib.pyplot as plt
 
     img = cv2.imread("/home/hudson/Desktop/Unicamp/datasets/megadepth1500/images/0015/29307281_d7872975e2_o.jpg")

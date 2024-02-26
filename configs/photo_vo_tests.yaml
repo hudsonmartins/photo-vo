@@ -8,8 +8,8 @@ data:
     train_num_per_scene: 30
     val_split: valid_scenes_tests.txt
     val_pairs: valid_pairs.txt
-    min_overlap: 0.3
-    max_overlap: 0.7
+    min_overlap: 0.6
+    max_overlap: 1.0
     num_overlap_bins: 1
     read_depth: true
     read_image: true
