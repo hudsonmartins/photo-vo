@@ -1,4 +1,5 @@
 import torch
+import cv2
 import argparse
 import matplotlib.pyplot as plt
 from omegaconf import OmegaConf
@@ -7,8 +8,9 @@ from gluefactory.datasets import get_dataset
 from gluefactory.models import get_model
 from gluefactory.visualization.viz2d import plot_heatmaps, plot_image_grid
 from gluefactory.utils.experiments import get_best_checkpoint, get_last_checkpoint, save_experiment
+from gluefactory.geometry.depth import sample_depth, project
 from gluefactory.utils.tensor import batch_to_device
-from utils import draw_pts, get_patches, draw_patches
+from utils import draw_pts, get_patches, draw_patches, get_torch_not_nan
 
 
 default_train_conf = {
@@ -114,9 +116,36 @@ def main(args):
 
     for it, data in enumerate(train_loader):
         data = batch_to_device(data, device, non_blocking=True)
+        depth0 = data["view0"].get("depth")
+        depth1 = data["view1"].get("depth")
+        camera0, camera1 = data["view0"]["camera"], data["view1"]["camera"]
+        T_0to1, T_1to0 = data["T_0to1"], data["T_1to0"]
         
         pred = model(data)
+        kpts0 = pred["keypoints0"] #(b, n, 2)
+        kpts1 = pred["keypoints1"]
 
+        d0, valid0 = sample_depth(kpts0, depth0)
+        d1, valid1 = sample_depth(kpts1, depth1)
+        kpts0_1, visible0 = project(
+            kpts0, d0, depth1, camera0, camera1, T_0to1, valid0
+        )
+        kpts0 = kpts0 * visible0.unsqueeze(-1)      
+        kpts0_1 = kpts0_1 * visible0.unsqueeze(-1)
+        print(kpts0.size())
+        #repace pts that are 0,0 with nan
+        kpts0[~visible0] = float('nan')
+        kpts0_1[~visible0] = float('nan')
+
+        #print(kpts0)
+        patches0 = get_patches(data["view0"]["image"], kpts0)
+        patches0_1 = get_patches(data["view1"]["image"], kpts0_1)
+
+        #for p1,p2 in zip(patches0, patches0_1):
+        #    print(p1.size())
+        #    cv2.imshow('patch0', p1.cpu().numpy())
+        #    cv2.imshow('patch1', p2.cpu().numpy())
+        #    cv2.waitKey(0)
 
         if(args.debug and it < 1):
             images.append(
@@ -125,14 +154,17 @@ def main(args):
                     for i in range(dataset.conf.views)
                 ]
             )
-
             images_kpts.append(
                 [
                     draw_patches(
-                        data[f"view{i}"]["image"][0].permute(1, 2, 0).cpu().numpy()*255,
-                        pred[f"keypoints{i}"][0].cpu().numpy()[:500],
+                        data["view0"]["image"][0].permute(1, 2, 0)*255,
+                        kpts0[0].cpu().numpy(),
+                    ),
+                    draw_patches(
+                        data["view1"]["image"][0].permute(1, 2, 0)*255,
+                        kpts0_1[0].cpu().numpy(),
+                        color=(255,0,0)
                     )
-                    for i in range(dataset.conf.views)
                 ]
             )
 
