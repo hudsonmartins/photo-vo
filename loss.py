@@ -1,4 +1,5 @@
 import torch
+from utils import matrix_to_euler_angles
 
 def get_ssim(Ia, Ib):
     #Extracted from https://github.com/mrharicot/monodepth/blob/master/monodepth_model.py#L91
@@ -25,6 +26,14 @@ def photometric_loss(img0, img1):
     alpha = 0.85 #Zhao et al
     pe = alpha * ssim_loss + (1-alpha) * l1_loss
     return pe
+
+
+def pose_error(R_true, t_true, R_pred, t_pred):
+    """Compute the pose error between true and predicted poses."""
+    #matrix from R, t
+    pred = torch.cat((t_pred, matrix_to_euler_angles(R_pred)), dim=1)
+    gt = torch.cat((t_true, matrix_to_euler_angles(R_true)), dim=1)
+    return torch.mean(torch.linalg.norm(pred - gt, dim=1, ord=2))
 
 
 if __name__ == "__main__":
