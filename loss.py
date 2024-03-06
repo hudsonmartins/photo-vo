@@ -20,7 +20,7 @@ def get_ssim(Ia, Ib):
 
 def photometric_loss(img0, img1):
     ssim = get_ssim(img0, img1)
-    ssim_loss = torch.mean(torch.clamp((1 - ssim)/2, 0, 1))
+    ssim_loss = torch.mean(torch.clamp((1 - ssim), 0, 1))
     l1 = torch.abs((img0 - img1))
     l1_loss = torch.mean(l1)
     alpha = 0.85 #Zhao et al
