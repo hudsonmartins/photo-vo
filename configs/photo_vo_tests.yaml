@@ -5,7 +5,7 @@ data:
         side: long
         square_pad: True
     train_split: train_scenes_tests.txt
-    train_num_per_scene: 30
+    train_num_per_scene: 5
     val_split: valid_scenes_tests.txt
     val_pairs: valid_pairs.txt
     min_overlap: 0.6
@@ -13,7 +13,7 @@ data:
     num_overlap_bins: 1
     read_depth: true
     read_image: true
-    batch_size: 1
+    batch_size: 2
     num_workers: 8
     load_features:
         do: false  # enable this if you have cached predictions
@@ -21,7 +21,7 @@ data:
         padding_length: 2048
         padding_fn: pad_local_features
         data_keys: ["keypoints", "keypoint_scores", "descriptors", "oris", "scales"]
-model:
+matcher_model:
     name: two_view_pipeline
     extractor:
         name: extractors.superpoint_open

@@ -5,13 +5,13 @@ import matplotlib.pyplot as plt
 from omegaconf import OmegaConf
 from gluefactory import logger
 from gluefactory.datasets import get_dataset
-from gluefactory.models import get_model
 from gluefactory.visualization.viz2d import plot_heatmaps, plot_image_grid
 from gluefactory.utils.experiments import get_best_checkpoint, get_last_checkpoint, save_experiment
 from gluefactory.geometry.depth import sample_depth, project
 from gluefactory.utils.tensor import batch_to_device
 from utils import get_patches, draw_patches
 from loss import photometric_loss
+from model import get_photo_vo_model
 
 default_train_conf = {
     "seed": "???",  # training seed
@@ -75,7 +75,10 @@ def train(model, train_loader, device):
         kpts0 = pred["keypoints0"]
         kpts1 = pred["keypoints1"]
         kpts0_1 = get_kpts_projection(kpts0, depth0, camera0, camera1, T_0to1)
-        kpts1_0 = get_kpts_projection(kpts1, depth1, camera1, camera0, T_1to0)      
+        kpts1_0 = get_kpts_projection(kpts1, depth1, camera1, camera0, T_1to0)
+        
+        patches0 = get_patches(data["view0"]["image"], kpts0)
+        patches1 = get_patches(data["view1"]["image"], kpts1)   
         
 
 def main(args):
@@ -134,8 +137,8 @@ def main(args):
         viz_patches_0 = []
         viz_patches_1 = []
         
-
-    model = get_model(conf.model.name)(conf.model).to(device)
+    photo_vo_model = get_photo_vo_model(conf)
+    model = photo_vo_model.matcher.to(device)
     if args.compile:
         model = torch.compile(model, mode=args.compile)
     loss_fn = model.loss

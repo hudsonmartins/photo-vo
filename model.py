@@ -22,7 +22,7 @@ class PhotoVoModel(nn.Module):
         super().__init__()
         self.config = {**self.default_config, **config}
         self.motion_estimator = MotionEstimator(self.config)
-        self.matcher = gf.models.get_model(config.model.name)(config.model)
+        self.matcher = gf.models.get_model(config.matcher_model.name)(config.matcher_model)
     
     def forward(self, data):
         #TODO
