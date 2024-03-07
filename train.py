@@ -5,11 +5,11 @@ import matplotlib.pyplot as plt
 from omegaconf import OmegaConf
 from gluefactory import logger
 from gluefactory.datasets import get_dataset
-from gluefactory.visualization.viz2d import plot_heatmaps, plot_image_grid
+from gluefactory.visualization.viz2d import plot_heatmaps, plot_image_grid, plot_keypoints, plot_matches, cm_RdGn
+from gluefactory.visualization.visualize_batch import make_match_figures
 from gluefactory.utils.experiments import get_best_checkpoint, get_last_checkpoint, save_experiment
-from gluefactory.geometry.depth import sample_depth, project
 from gluefactory.utils.tensor import batch_to_device
-from utils import get_patches, draw_patches
+from utils import get_patches, draw_patches, get_kpts_projection
 from loss import photometric_loss
 from model import get_photo_vo_model
 
@@ -49,43 +49,84 @@ default_train_conf = {
 }
 default_train_conf = OmegaConf.create(default_train_conf)
 
-def get_kpts_projection(kpts, depth, camera0, camera1, T_0to1):
-    d, valid = sample_depth(kpts, depth)
-    kpts = kpts * valid.unsqueeze(-1)
+def debug_batch(data, pred, n_pairs=2):
+    images, kpts, matches, mcolors = [], [], [], []
+    heatmaps = []
+    pred = batch_to_device(pred, "cpu", non_blocking=False)
+    data = batch_to_device(data, "cpu", non_blocking=False)
+    view0, view1 = data["view0"], data["view1"]
 
-    kpts_1, visible = project(
-        kpts, d, depth, camera0, camera1, T_0to1, valid
-    )
-    kpts = kpts * visible.unsqueeze(-1)
-    kpts_1 = kpts_1 * visible.unsqueeze(-1)
-    kpts[~visible] = float('nan')
-    kpts_1[~visible] = float('nan')
-    return kpts, kpts_1
+    n_pairs = min(n_pairs, view0["image"].shape[0])
+    assert view0["image"].shape[0] >= n_pairs
+
+    kp0, kp1 = pred["keypoints0"], pred["keypoints1"]
+    m0 = pred["matches0"]
+
+    for i in range(n_pairs):
+        valid = (m0[i] > -1)
+        kpm0, kpm1 = kp0[i][valid].numpy(), kp1[i][m0[i][valid]].numpy()
+        images.append(
+            [view0["image"][i].permute(1, 2, 0), view1["image"][i].permute(1, 2, 0)]
+        )
+        kpts.append([kp0[i], kp1[i]])
+        matches.append((kpm0, kpm1))
+
+        correct = m0[i][valid]
+
+        if "heatmap0" in pred.keys():
+            heatmaps.append(
+                [
+                    torch.sigmoid(pred["heatmap0"][i, 0]),
+                    torch.sigmoid(pred["heatmap1"][i, 0]),
+                ]
+            )
+        elif "depth" in view0.keys() and view0["depth"] is not None:
+            heatmaps.append([view0["depth"][i], view1["depth"][i]])
+
+        mcolors.append(cm_RdGn(correct).tolist())
+
+    fig, axes = plot_image_grid(images, return_fig=True, set_lim=True)
+    if len(heatmaps) > 0:
+        [plot_heatmaps(heatmaps[i], axes=axes[i], a=1.0) for i in range(n_pairs)]
+    [plot_keypoints(kpts[i], axes=axes[i], colors="royalblue") for i in range(n_pairs)]
+    [
+        plot_matches(*matches[i], color=mcolors[i], axes=axes[i], a=0.5, lw=1.0, ps=0.0)
+        for i in range(n_pairs)
+    ]
+    return fig
 
 
-def train(model, train_loader, device):
+
+def train(model, train_loader, device, debug=False):
     for it, data in enumerate(train_loader):
         data = batch_to_device(data, device, non_blocking=True)
-        pred = model(data)
-
-        depth0 = data["view0"].get("depth")
-        depth1 = data["view1"].get("depth")
-        camera0, camera1 = data["view0"]["camera"], data["view1"]["camera"]
-        T_0to1, T_1to0 = data["T_0to1"], data["T_1to0"]
-        kpts0 = pred["keypoints0"]
-        kpts1 = pred["keypoints1"]
-        kpts0_1 = get_kpts_projection(kpts0, depth0, camera0, camera1, T_0to1)
-        kpts1_0 = get_kpts_projection(kpts1, depth1, camera1, camera0, T_1to0)
+        features = model.matcher(data)
+        if(debug):
+            debug_batch(data, features, n_pairs=1)
+            plt.show()
         
-        patches0 = get_patches(data["view0"]["image"], kpts0)
-        patches1 = get_patches(data["view1"]["image"], kpts1)
+        # patches0 = get_patches(data["view0"]["image"], kpts0)
+        # patches1 = get_patches(data["view1"]["image"], kpts1)
+
+        # data['view0']['patches'] = patches0
+        # data['view1']['patches'] = patches1
+
+        #Compute loss
+
+        
+        # kpts0_1 = get_kpts_projection(kpts0, depth0, camera0, camera1, T_0to1)
+        # kpts1_0 = get_kpts_projection(kpts1, depth1, camera1, camera0, T_1to0)
+        # depth0 = data["view0"].get("depth")
+        # depth1 = data["view1"].get("depth")
+        # camera0, camera1 = data["view0"]["camera"], data["view1"]["camera"]
+        # T_0to1, T_1to0 = data["T_0to1"], data["T_1to0"]
         
 
 def main(args):
     logger.info('Training with the following configuration: ')
     conf = OmegaConf.load(args.conf)
     logger.info(conf.data)
-    
+    assert conf.features_model.name == 'two_view_pipeline'
     device = "cuda" if torch.cuda.is_available() and args.use_cuda else "cpu"
     logger.info(f"Using device {device}")
     
@@ -131,12 +172,6 @@ def main(args):
     train_loader = dataset.get_data_loader("train")
     print(f"Training loader has {len(train_loader)} batches")
 
-    if(args.debug):
-        logger.warn('Debugging mode enabled')
-        images, depths, images_kpts = [], [], []
-        viz_patches_0 = []
-        viz_patches_1 = []
-        
     photo_vo_model = get_photo_vo_model(conf)
     model = photo_vo_model.matcher.to(device)
     if args.compile:
@@ -145,76 +180,8 @@ def main(args):
     if init_cp is not None:
         model.load_state_dict(init_cp["model"], strict=False)
 
+    train(photo_vo_model, train_loader, device, args.debug)
 
-    if(args.debug):
-        model.eval()
-        data = batch_to_device(next(iter(train_loader)), device, non_blocking=True)        
-        pred = model(data)
-        depth0 = data["view0"].get("depth")
-        depth1 = data["view1"].get("depth")
-        camera0, camera1 = data["view0"]["camera"], data["view1"]["camera"]
-        T_0to1, T_1to0 = data["T_0to1"], data["T_1to0"]
-        kpts0 = pred["keypoints0"] #(b, n, 2)
-    
-        d0, valid0 = sample_depth(kpts0, depth0)
-        kpts0_1, visible0 = project(
-            kpts0, d0, depth1, camera0, camera1, T_0to1, valid0
-        )
-        kpts0 = kpts0 * visible0.unsqueeze(-1)      
-        kpts0_1 = kpts0_1 * visible0.unsqueeze(-1)
-
-        #repace pts that are 0,0 with nan
-        kpts0[~visible0] = float('nan')
-        kpts0_1[~visible0] = float('nan')
-
-        #print(kpts0)
-        patches0 = get_patches(data["view0"]["image"], kpts0)
-        patches0_1 = get_patches(data["view1"]["image"], kpts0_1)
-        
-        for p1,p2 in zip(patches0[0], patches0_1[0]):
-            if(torch.isnan(p1).any() or torch.isnan(p2).any()):
-                    continue
-            viz_patches_0.append(p1.permute(1, 2, 0).cpu().numpy())
-            viz_patches_1.append(p2.permute(1, 2, 0).cpu().numpy())
-        
-        images.append(
-            [
-                data[f"view{i}"]["image"][0].permute(1, 2, 0)
-                for i in range(dataset.conf.views)
-            ]
-        )
-        images_kpts.append(
-            [
-                draw_patches(
-                    data["view0"]["image"][0].permute(1, 2, 0)*255,
-                    kpts0[0].cpu().numpy(),
-                ),
-                draw_patches(
-                    data["view1"]["image"][0].permute(1, 2, 0)*255,
-                    kpts0_1[0].cpu().numpy(),
-                    color=(255,0,0)
-                )
-            ]
-        )
-
-        depths.append(
-            [data[f"view{i}"]["depth"][0] for i in range(dataset.conf.views)]
-        )
-                
-        #axes = plot_image_grid(images, dpi=100)
-        #draw imgs_keypoints
-        axes = plot_image_grid(images_kpts, dpi=100)
-        for i in range(len(images_kpts)):
-            plot_heatmaps(depths[i], axes=axes[i])
-        plt.show() 
-
-        axes = plot_image_grid([viz_patches_0[:5], viz_patches_1[:5]], dpi=100)
-        loss = photometric_loss(torch.Tensor(viz_patches_0[:5]).permute(0, 3, 1, 2), 
-                                torch.Tensor(viz_patches_1[:5]).permute(0, 3, 1, 2))
-        print('loss ', loss)
-        plt.show()
-    else:
-        train(model, train_loader)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

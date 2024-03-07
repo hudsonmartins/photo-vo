@@ -1,11 +1,20 @@
 import torch
 import cv2
 import numpy as np
+from gluefactory.geometry.depth import sample_depth, project
 
+def get_kpts_projection(kpts, depth, camera0, camera1, T_0to1):
+    d, valid = sample_depth(kpts, depth)
+    kpts = kpts * valid.unsqueeze(-1)
 
-def get_torch_not_nan(tensor):
-    """Returns a tensor without nan values"""
-    return tensor[~torch.isnan(tensor)]
+    kpts_1, visible = project(
+        kpts, d, depth, camera0, camera1, T_0to1, valid
+    )
+    kpts = kpts * visible.unsqueeze(-1)
+    kpts_1 = kpts_1 * visible.unsqueeze(-1)
+    kpts[~visible] = float('nan')
+    kpts_1[~visible] = float('nan')
+    return kpts, kpts_1
 
     
 def draw_patches(img, kpts, color=(0,0,255), patch_size=10):

@@ -21,7 +21,7 @@ data:
         padding_length: 2048
         padding_fn: pad_local_features
         data_keys: ["keypoints", "keypoint_scores", "descriptors", "oris", "scales"]
-matcher_model:
+features_model:
     name: two_view_pipeline
     extractor:
         name: extractors.superpoint_open
