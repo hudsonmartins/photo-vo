@@ -78,7 +78,7 @@ def train(model, train_loader, device):
         kpts1_0 = get_kpts_projection(kpts1, depth1, camera1, camera0, T_1to0)
         
         patches0 = get_patches(data["view0"]["image"], kpts0)
-        patches1 = get_patches(data["view1"]["image"], kpts1)   
+        patches1 = get_patches(data["view1"]["image"], kpts1)
         
 
 def main(args):
