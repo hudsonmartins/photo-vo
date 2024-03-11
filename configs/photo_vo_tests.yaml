@@ -13,7 +13,7 @@ data:
     num_overlap_bins: 1
     read_depth: true
     read_image: true
-    batch_size: 2
+    batch_size: 1
     num_workers: 8
     load_features:
         do: false  # enable this if you have cached predictions
@@ -31,7 +31,8 @@ features_model:
         nms_radius: 3
         trainable: False
     matcher:
-        name: matchers.lightglue
+        name: matchers.lightglue_pretrained
+        features: superpoint
         filter_threshold: 0.1
         flash: false
         checkpointed: true

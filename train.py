@@ -50,18 +50,25 @@ default_train_conf = {
 default_train_conf = OmegaConf.create(default_train_conf)
 
 def debug_batch(data, pred, n_pairs=2):
+    '''
+    Visualize the first n_pairs in the batch
+    Copied from gluefactory.visualization.visualize_batch.py
+    '''
+    if "0to1" in pred.keys():
+        pred = pred["0to1"]
+    
+    data = batch_to_device(data, "cpu", non_blocking=False)
+    pred = batch_to_device(pred, "cpu", non_blocking=False)
     images, kpts, matches, mcolors = [], [], [], []
     heatmaps = []
-    pred = batch_to_device(pred, "cpu", non_blocking=False)
-    data = batch_to_device(data, "cpu", non_blocking=False)
     view0, view1 = data["view0"], data["view1"]
 
     n_pairs = min(n_pairs, view0["image"].shape[0])
+    
     assert view0["image"].shape[0] >= n_pairs
-
     kp0, kp1 = pred["keypoints0"], pred["keypoints1"]
     m0 = pred["matches0"]
-
+    
     for i in range(n_pairs):
         valid = (m0[i] > -1)
         kpm0, kpm1 = kp0[i][valid].numpy(), kp1[i][m0[i][valid]].numpy()
@@ -87,7 +94,7 @@ def debug_batch(data, pred, n_pairs=2):
 
     fig, axes = plot_image_grid(images, return_fig=True, set_lim=True)
     if len(heatmaps) > 0:
-        [plot_heatmaps(heatmaps[i], axes=axes[i], a=1.0) for i in range(n_pairs)]
+       [plot_heatmaps(heatmaps[i], axes=axes[i], a=1.0) for i in range(n_pairs)]
     [plot_keypoints(kpts[i], axes=axes[i], colors="royalblue") for i in range(n_pairs)]
     [
         plot_matches(*matches[i], color=mcolors[i], axes=axes[i], a=0.5, lw=1.0, ps=0.0)
@@ -98,6 +105,7 @@ def debug_batch(data, pred, n_pairs=2):
 
 
 def train(model, train_loader, device, debug=False):
+    model.eval()
     for it, data in enumerate(train_loader):
         data = batch_to_device(data, device, non_blocking=True)
         features = model.matcher(data)
