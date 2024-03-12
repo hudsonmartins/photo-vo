@@ -5,11 +5,9 @@ import matplotlib.pyplot as plt
 from omegaconf import OmegaConf
 from gluefactory import logger
 from gluefactory.datasets import get_dataset
-from gluefactory.visualization.viz2d import plot_heatmaps, plot_image_grid, plot_keypoints, plot_matches, cm_RdGn
-from gluefactory.visualization.visualize_batch import make_match_figures
 from gluefactory.utils.experiments import get_best_checkpoint, get_last_checkpoint, save_experiment
 from gluefactory.utils.tensor import batch_to_device
-from utils import get_patches, draw_patches, get_kpts_projection
+from utils import debug_batch, get_sorted_kpts_by_matches
 from loss import photometric_loss
 from model import get_photo_vo_model
 
@@ -49,60 +47,6 @@ default_train_conf = {
 }
 default_train_conf = OmegaConf.create(default_train_conf)
 
-def debug_batch(data, pred, n_pairs=2):
-    '''
-    Visualize the first n_pairs in the batch
-    Copied from gluefactory.visualization.visualize_batch.py
-    '''
-    if "0to1" in pred.keys():
-        pred = pred["0to1"]
-    
-    data = batch_to_device(data, "cpu", non_blocking=False)
-    pred = batch_to_device(pred, "cpu", non_blocking=False)
-    images, kpts, matches, mcolors = [], [], [], []
-    heatmaps = []
-    view0, view1 = data["view0"], data["view1"]
-
-    n_pairs = min(n_pairs, view0["image"].shape[0])
-    
-    assert view0["image"].shape[0] >= n_pairs
-    kp0, kp1 = pred["keypoints0"], pred["keypoints1"]
-    m0 = pred["matches0"]
-    
-    for i in range(n_pairs):
-        valid = (m0[i] > -1)
-        kpm0, kpm1 = kp0[i][valid].numpy(), kp1[i][m0[i][valid]].numpy()
-        images.append(
-            [view0["image"][i].permute(1, 2, 0), view1["image"][i].permute(1, 2, 0)]
-        )
-        kpts.append([kp0[i], kp1[i]])
-        matches.append((kpm0, kpm1))
-
-        correct = m0[i][valid]
-
-        if "heatmap0" in pred.keys():
-            heatmaps.append(
-                [
-                    torch.sigmoid(pred["heatmap0"][i, 0]),
-                    torch.sigmoid(pred["heatmap1"][i, 0]),
-                ]
-            )
-        elif "depth" in view0.keys() and view0["depth"] is not None:
-            heatmaps.append([view0["depth"][i], view1["depth"][i]])
-
-        mcolors.append(cm_RdGn(correct).tolist())
-
-    fig, axes = plot_image_grid(images, return_fig=True, set_lim=True)
-    if len(heatmaps) > 0:
-       [plot_heatmaps(heatmaps[i], axes=axes[i], a=1.0) for i in range(n_pairs)]
-    [plot_keypoints(kpts[i], axes=axes[i], colors="royalblue") for i in range(n_pairs)]
-    [
-        plot_matches(*matches[i], color=mcolors[i], axes=axes[i], a=0.5, lw=1.0, ps=0.0)
-        for i in range(n_pairs)
-    ]
-    return fig
-
-
 
 def train(model, train_loader, device, debug=False):
     model.eval()
@@ -113,6 +57,19 @@ def train(model, train_loader, device, debug=False):
             debug_batch(data, features, n_pairs=1)
             plt.show()
         
+        kpts0 = features["keypoints0"]
+        kpts1 = features["keypoints1"]
+        print('Before sorting')
+        print('kpts0 ', kpts0)
+        print('kpts1 ', kpts1)
+        print('matches0 ', features['matches0'])
+        print('matching_scores0 ', features['matching_scores0'])
+        features = get_sorted_kpts_by_matches(features)
+        print('After sorting')
+        print('matches0 ', features['sorted_matches0'])
+        print('matching_scores0 ', features['sorted_matching_scores0'])
+        print('kpts0 ', features["sorted_keypoints0"])
+        print('kpts1 ', features["sorted_keypoints1"])
         # patches0 = get_patches(data["view0"]["image"], kpts0)
         # patches1 = get_patches(data["view1"]["image"], kpts1)
 
@@ -121,7 +78,6 @@ def train(model, train_loader, device, debug=False):
 
         #Compute loss
 
-        
         # kpts0_1 = get_kpts_projection(kpts0, depth0, camera0, camera1, T_0to1)
         # kpts1_0 = get_kpts_projection(kpts1, depth1, camera1, camera0, T_1to0)
         # depth0 = data["view0"].get("depth")

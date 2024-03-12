@@ -3,7 +3,7 @@ import torch
 from torch import nn
 import gluefactory as gf
 from torchvision.models import resnet18
-
+from utils import get_patches
 
 class PatchEncoder(nn.Module):
     def __init__(self, config):
@@ -49,8 +49,15 @@ class PhotoVoModel(nn.Module):
         self.matcher = gf.models.get_model(config.features_model.name)(config.features_model)
     
     def forward(self, data):
-        pred1 = self.matcher(data)
-        output = self.motion_estimator({**data, **pred1})
+        feats = self.matcher(data)
+        kpts0, kpts1 = feats['keypoints0'], feats['keypoints1']
+        patches0 = get_patches(data["view0"]["image"], kpts0)
+        patches1 = get_patches(data["view1"]["image"], kpts1)
+
+        data['view0']['patches'] = patches0
+        data['view1']['patches'] = patches1
+
+        output = self.motion_estimator({**data, **feats})
         return output
 
     

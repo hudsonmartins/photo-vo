@@ -2,6 +2,98 @@ import torch
 import cv2
 import numpy as np
 from gluefactory.geometry.depth import sample_depth, project
+from gluefactory.visualization.visualize_batch import make_match_figures
+from gluefactory.utils.tensor import batch_to_device
+from gluefactory.visualization.viz2d import plot_heatmaps, plot_image_grid, plot_keypoints, plot_matches, cm_RdGn
+
+
+def get_sorted_kpts_by_matches(data):
+    """
+    Sort keypoints and matches by matching scores
+    """
+    kpts0, kpts1 = data["keypoints0"], data["keypoints1"]
+    m0 = data["matches0"]
+    scores0 = data["matching_scores0"]
+    bsize = kpts0.size(0)
+    skpts0, skpts1, sm0, sscores0 = [], [], [], []
+
+    for i in range(bsize):
+        valid0 = m0[i] > -1
+        kpts0_valid = kpts0[i][valid0].detach()
+        kpts1_valid = kpts1[i][m0[i][valid0]].detach()
+        m0_valid = m0[i][valid0].detach()
+        scores0_valid = scores0[i][valid0].detach()
+        #sort by matching scores
+        scores0_valid, indices = torch.sort(scores0_valid, descending=True)
+        kpts0_valid = kpts0_valid[indices]
+        kpts1_valid = kpts1_valid[indices]
+        m0_valid = m0_valid[i][indices]
+        skpts0.append(kpts0_valid)
+        skpts1.append(kpts1_valid)
+        sm0.append(m0_valid)
+        sscores0.append(scores0_valid)
+
+    data["sorted_keypoints0"] = torch.Tensor(np.array(skpts0))
+    data["sorted_keypoints1"] = torch.Tensor(np.array(skpts1))
+    data["sorted_matches0"] = torch.Tensor(np.array(sm0))
+    data["sorted_matching_scores0"] = torch.Tensor(np.array(sscores0))
+
+    return data
+
+
+
+def debug_batch(data, pred, n_pairs=2):
+    '''
+    Visualize the first n_pairs in the batch
+    Copied from gluefactory.visualization.visualize_batch.py
+    '''
+    if "0to1" in pred.keys():
+        pred = pred["0to1"]
+    
+    data = batch_to_device(data, "cpu", non_blocking=False)
+    pred = batch_to_device(pred, "cpu", non_blocking=False)
+    images, kpts, matches, mcolors = [], [], [], []
+    heatmaps = []
+    view0, view1 = data["view0"], data["view1"]
+
+    n_pairs = min(n_pairs, view0["image"].shape[0])
+    
+    assert view0["image"].shape[0] >= n_pairs
+    kp0, kp1 = pred["keypoints0"], pred["keypoints1"]
+    m0 = pred["matches0"]
+    
+    for i in range(n_pairs):
+        valid = (m0[i] > -1)
+        kpm0, kpm1 = kp0[i][valid].numpy(), kp1[i][m0[i][valid]].numpy()
+        images.append(
+            [view0["image"][i].permute(1, 2, 0), view1["image"][i].permute(1, 2, 0)]
+        )
+        kpts.append([kp0[i], kp1[i]])
+        matches.append((kpm0, kpm1))
+
+        correct = m0[i][valid]
+
+        if "heatmap0" in pred.keys():
+            heatmaps.append(
+                [
+                    torch.sigmoid(pred["heatmap0"][i, 0]),
+                    torch.sigmoid(pred["heatmap1"][i, 0]),
+                ]
+            )
+        elif "depth" in view0.keys() and view0["depth"] is not None:
+            heatmaps.append([view0["depth"][i], view1["depth"][i]])
+
+        mcolors.append(cm_RdGn(correct).tolist())
+
+    fig, axes = plot_image_grid(images, return_fig=True, set_lim=True)
+    if len(heatmaps) > 0:
+       [plot_heatmaps(heatmaps[i], axes=axes[i], a=1.0) for i in range(n_pairs)]
+    [plot_keypoints(kpts[i], axes=axes[i], colors="royalblue") for i in range(n_pairs)]
+    [
+        plot_matches(*matches[i], color=mcolors[i], axes=axes[i], a=0.5, lw=1.0, ps=0.0)
+        for i in range(n_pairs)
+    ]
+    return fig
 
 def get_kpts_projection(kpts, depth, camera0, camera1, T_0to1):
     d, valid = sample_depth(kpts, depth)
