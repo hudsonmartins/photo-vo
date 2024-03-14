@@ -1,46 +1,31 @@
 import torch
 import cv2
 import numpy as np
+import matplotlib.cm as cm
 from gluefactory.geometry.depth import sample_depth, project
-from gluefactory.visualization.visualize_batch import make_match_figures
 from gluefactory.utils.tensor import batch_to_device
 from gluefactory.visualization.viz2d import plot_heatmaps, plot_image_grid, plot_keypoints, plot_matches, cm_RdGn
 
 
-def get_sorted_kpts_by_matches(data):
+def get_sorted_matches(data):
     """
-    Sort keypoints and matches by matching scores
+    Find matches ordered by score
     """
-    kpts0, kpts1 = data["keypoints0"], data["keypoints1"]
+    
     m0 = data["matches0"]
     scores0 = data["matching_scores0"]
-    bsize = kpts0.size(0)
-    skpts0, skpts1, sm0, sscores0 = [], [], [], []
+    b_size = m0.size(0)
+    b_mcfs = torch.empty(b_size, m0.size(1), 3)
 
-    for i in range(bsize):
-        valid0 = m0[i] > -1
-        kpts0_valid = kpts0[i][valid0].detach()
-        kpts1_valid = kpts1[i][m0[i][valid0]].detach()
-        m0_valid = m0[i][valid0].detach()
-        scores0_valid = scores0[i][valid0].detach()
-        #sort by matching scores
-        scores0_valid, indices = torch.sort(scores0_valid, descending=True)
-        kpts0_valid = kpts0_valid[indices]
-        kpts1_valid = kpts1_valid[indices]
-        m0_valid = m0_valid[i][indices]
-        skpts0.append(kpts0_valid)
-        skpts1.append(kpts1_valid)
-        sm0.append(m0_valid)
-        sscores0.append(scores0_valid)
-
-    data["sorted_keypoints0"] = torch.Tensor(np.array(skpts0))
-    data["sorted_keypoints1"] = torch.Tensor(np.array(skpts1))
-    data["sorted_matches0"] = torch.Tensor(np.array(sm0))
-    data["sorted_matching_scores0"] = torch.Tensor(np.array(sscores0))
-
-    return data
-
-
+    for i in range(b_size):
+        mcfs = torch.empty(m0.size(1), 3)
+        for j, (m, c) in enumerate(zip(m0[i], scores0[i])):
+            mcfs[j] = torch.tensor([j, m, c])  
+        sorted_indices = torch.argsort(mcfs[:, 2], descending=True)
+        sorted_mcfs = mcfs[sorted_indices]
+        b_mcfs[i] = sorted_mcfs
+    return b_mcfs
+    
 
 def debug_batch(data, pred, n_pairs=2):
     '''
@@ -134,6 +119,31 @@ def draw_pts(img, pts, color=(0, 0, 255), radius=5):
         img = cv2.circle(np.ascontiguousarray(img).astype(np.uint8), (int(pt[0]), int(pt[1])), radius, color, 2)
     return img
 
+def draw_matches(image0, image1, kpts0, kpts1, scores=None):
+    H0, W0 = image0.shape[0], image0.shape[1]
+    H1, W1 = image1.shape[0], image1.shape[1]
+
+    H, W = max(H0, H1), W0 + W1
+    out = 255 * np.ones((H, W, 3), np.uint8)
+    out[:H0, :W0, :] = image0
+    out[:H1, W0:, :] = image1
+
+    kpts0, kpts1 = np.round(kpts0).astype(int), np.round(kpts1).astype(int)
+
+    # get color
+    if scores is not None:
+        smin, smax = scores.min(), scores.max()
+        assert (0 <= smin <= 1 and 0 <= smax <= 1)
+
+        color = cm.gist_rainbow(scores * 0.4)
+        color = (np.array(color[:, :3]) * 255).astype(int)[:, ::-1]
+    else:
+        color = np.zeros((kpts0.shape[0], 3), dtype=int)
+
+    for (x0, y0), (x1, y1), c in zip(kpts0, kpts1, color):
+        c = c.tolist()
+        cv2.line(out, (x0, y0), (x1 + W0, y1), color=c, thickness=1, lineType=cv2.LINE_AA)
+    return out
 
 
 def get_patches(img, pts, patch_size=10):

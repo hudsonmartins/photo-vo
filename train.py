@@ -7,9 +7,10 @@ from gluefactory import logger
 from gluefactory.datasets import get_dataset
 from gluefactory.utils.experiments import get_best_checkpoint, get_last_checkpoint, save_experiment
 from gluefactory.utils.tensor import batch_to_device
-from utils import debug_batch, get_sorted_kpts_by_matches
+from utils import debug_batch, get_sorted_matches
 from loss import photometric_loss
 from model import get_photo_vo_model
+from utils import draw_patches, draw_matches
 
 default_train_conf = {
     "seed": "???",  # training seed
@@ -52,24 +53,15 @@ def train(model, train_loader, device, debug=False):
     model.eval()
     for it, data in enumerate(train_loader):
         data = batch_to_device(data, device, non_blocking=True)
-        features = model.matcher(data)
-        if(debug):
-            debug_batch(data, features, n_pairs=1)
-            plt.show()
+        #features = model.matcher(data)
+        out = model(data)
+        #if(debug):
+        #    debug_batch(data, features, n_pairs=1)
+        #    plt.show()
         
-        kpts0 = features["keypoints0"]
-        kpts1 = features["keypoints1"]
-        print('Before sorting')
-        print('kpts0 ', kpts0)
-        print('kpts1 ', kpts1)
-        print('matches0 ', features['matches0'])
-        print('matching_scores0 ', features['matching_scores0'])
-        features = get_sorted_kpts_by_matches(features)
-        print('After sorting')
-        print('matches0 ', features['sorted_matches0'])
-        print('matching_scores0 ', features['sorted_matching_scores0'])
-        print('kpts0 ', features["sorted_keypoints0"])
-        print('kpts1 ', features["sorted_keypoints1"])
+        #kpts0 = features["keypoints0"]
+        #kpts1 = features["keypoints1"]
+
         # patches0 = get_patches(data["view0"]["image"], kpts0)
         # patches1 = get_patches(data["view1"]["image"], kpts1)
 
