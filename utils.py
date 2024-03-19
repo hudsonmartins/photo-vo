@@ -146,7 +146,7 @@ def draw_matches(image0, image1, kpts0, kpts1, scores=None):
     return out
 
 
-def get_patches(img, pts, patch_size=10):
+def get_patches(img, pts, patch_size=16):
     """Given an image and a set of points, return the patches around the points"""
 
     batch_size = img.size(0)
