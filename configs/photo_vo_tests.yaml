@@ -42,6 +42,11 @@ features_model:
         th_negative: 5
         th_epi: 5
     allow_no_extract: True
+photo_vo:
+    name: photo_vo
+    model:
+        patch_size: 16
+        dim_patch_emb: 128
 train:
     seed: 0
     epochs: 5
