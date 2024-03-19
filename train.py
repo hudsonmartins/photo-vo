@@ -8,7 +8,6 @@ from gluefactory.datasets import get_dataset
 from gluefactory.utils.experiments import get_best_checkpoint, get_last_checkpoint, save_experiment
 from gluefactory.utils.tensor import batch_to_device
 from utils import debug_batch, get_sorted_matches
-from loss import photometric_loss
 from model import get_photo_vo_model
 from utils import draw_patches, draw_matches
 
@@ -53,29 +52,20 @@ def train(model, train_loader, device, debug=False):
     model.eval()
     for it, data in enumerate(train_loader):
         data = batch_to_device(data, device, non_blocking=True)
-        #features = model.matcher(data)
-        out = model(data)
-        #if(debug):
-        #    debug_batch(data, features, n_pairs=1)
-        #    plt.show()
+        output = model(data)
+        model.loss(output, data)
+        if(debug):
+           debug_batch(data, output, n_pairs=1)
+           plt.show()
         
-        #kpts0 = features["keypoints0"]
-        #kpts1 = features["keypoints1"]
-
-        # patches0 = get_patches(data["view0"]["image"], kpts0)
-        # patches1 = get_patches(data["view1"]["image"], kpts1)
-
-        # data['view0']['patches'] = patches0
-        # data['view1']['patches'] = patches1
-
         #Compute loss
-
-        # kpts0_1 = get_kpts_projection(kpts0, depth0, camera0, camera1, T_0to1)
-        # kpts1_0 = get_kpts_projection(kpts1, depth1, camera1, camera0, T_1to0)
         # depth0 = data["view0"].get("depth")
         # depth1 = data["view1"].get("depth")
         # camera0, camera1 = data["view0"]["camera"], data["view1"]["camera"]
         # T_0to1, T_1to0 = data["T_0to1"], data["T_1to0"]
+        # kpts0_1 = get_kpts_projection(kpts0, depth0, camera0, camera1, T_0to1)
+        # kpts1_0 = get_kpts_projection(kpts1, depth1, camera1, camera0, T_1to0)
+        
         
 
 def main(args):
