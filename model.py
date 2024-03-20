@@ -1,10 +1,11 @@
 
 import torch
+import numpy as np
 from torch import nn
 import gluefactory as gf
-from torchvision.models import resnet18
-from typing import Callable, List, Optional
-from utils import get_patches, get_sorted_matches
+import torchvision.models as models
+import torch.utils.model_zoo as model_zoo
+from utils import get_patches, get_sorted_matches, normalize_image
 from loss import photometric_loss, pose_error
 
 
@@ -25,29 +26,65 @@ class PatchEncoder(nn.Module):
         patches = torch.cat([data['view0']['patches'], data['view1']['patches']], dim=1)
         return self.patch_emb(patches)
 
+class ResNetMultiImageInput(models.ResNet):
+    """Constructs a resnet model with varying number of input images.
+    Extracted from: https://github.com/nianticlabs/monodepth2/blob/master/networks/resnet_encoder.py#L17
+    """
+    def __init__(self, block, layers, num_input_images=2):
+        super(ResNetMultiImageInput, self).__init__(block, layers)
+        self.inplanes = 64
+        self.conv1 = nn.Conv2d(
+            num_input_images * 3, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.relu = nn.ReLU(inplace=True)
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        self.layer1 = self._make_layer(block, 64, layers[0])
+        self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
+        self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+class ImagePairEncoder(nn.Module):
+    def __init__(self):
+        super(ImagePairEncoder, self).__init__()
+
+        self.channels = np.array([64, 64, 128, 256, 512])
+        block_type = models.resnet.BasicBlock
+        layers = [2, 2, 2, 2]
+        self.encoder = ResNetMultiImageInput(block_type, layers, num_input_images=2)
+        resnet18 = model_zoo.load_url(models.resnet.model_urls['resnet18'])
+        resnet18['conv1.weight'] = torch.cat([resnet18['conv1.weight']] * 2, 1)/2
+        self.encoder.load_state_dict(resnet18)
+    
+    def forward(self, data):
+        im0 = data['view0']['image']
+        im1 = data['view1']['image']
+        im0 = normalize_image(im0)
+        im1 = normalize_image(im1)
+        images = torch.cat([im0, im1], dim=1)
+        x = self.encoder.conv1(images)
+        x = self.encoder.bn1(x)
+        x = self.encoder.relu(x)
+        x = self.encoder.maxpool(x)
+        x = self.encoder.layer1(x)
+        x = self.encoder.layer2(x)
+        x = self.encoder.layer3(x)
+        x = self.encoder.layer4(x)
+        return x
 
 class MotionEstimator(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.resnet = resnet18(pretrained=True)
         input_size = 2*3 + config.photo_vo.model.dim_patch_emb #num_views * num_channels + n encodings
-        self.resnet.conv1 = nn.Conv2d(input_size, 64, kernel_size=3, stride=1, bias=False)
-        n_emb = self.resnet.fc.in_features
-        self.resnet.fc = nn.Identity()
-        self.pose_est = nn.Sequential(nn.Linear(n_emb, 1024),
-                                        nn.ReLU(),
-                                        nn.Linear(1024, 512),
-                                        nn.ReLU(),
-                                        nn.Linear(512, 6))
         
     def forward(self, data):
-        im0 = data['view0']['image']
-        im1 = data['view1']['image']
-        images = torch.cat([im0, im1], dim=1)
-        embs = self.resnet(images)
-        egomotion = self.pose_est(embs)
-        output = {**data, 'egomotion': egomotion}
-        return output
+        pass
 
 
 class PhotoVoModel(nn.Module):
@@ -55,13 +92,11 @@ class PhotoVoModel(nn.Module):
         super().__init__()
         self.config = config
         self.penc = PatchEncoder(config)
-        self.motion_estimator = MotionEstimator(config)
+        self.imgenc = ImagePairEncoder()
         self.matcher = gf.models.get_model(config.features_model.name)(config.features_model)
-    
+        #self.motion_estimator = MotionEstimator(config)
+
     def forward(self, data):
-        if 'view0' in data.keys() and 'view1' in data.keys():
-            size0 = data['view0'].get('image_size')
-            size1 = data['view1'].get('image_size')
         feats = self.matcher(data)
         kpts0, kpts1 = feats['keypoints0'], feats['keypoints1']
 
@@ -99,13 +134,20 @@ class PhotoVoModel(nn.Module):
         data['view1']['patches'] = patches1
         # Encode patches
         patch_embs= self.penc(data)
-
+        
         # Concat with scores
         scores0 = torch.cat([scores0_valid, torch.full((scores0_valid.size(0), kpts0.size(1)-scores0_valid.size(1)), -1.0, dtype=scores0_valid.dtype, device=scores0_valid.device)], dim=1)
         scores1 = torch.cat([scores1_valid, torch.full((scores1_valid.size(0), kpts1.size(1)-scores1_valid.size(1)), -1.0, dtype=scores1_valid.dtype, device=scores1_valid.device)], dim=1)
         scores = torch.cat([scores0, scores1], dim=1)
         patch_embs = torch.cat([patch_embs, scores.unsqueeze(-1)], dim=-1)
         
+        print('patch embs ', patch_embs.shape)
+        
+        # Encode images
+        image_embs = self.imgenc(data)
+        print('image embs ', image_embs.shape)
+
+
         output = None
         #output = self.motion_estimator({**data, **feats})
         return output

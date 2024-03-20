@@ -6,6 +6,14 @@ from gluefactory.geometry.depth import sample_depth, project
 from gluefactory.utils.tensor import batch_to_device
 from gluefactory.visualization.viz2d import plot_heatmaps, plot_image_grid, plot_keypoints, plot_matches, cm_RdGn
 
+def normalize_image(image):
+    """
+    Normalize using imagenet mean and std
+    """
+    mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+    std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+    return (image - mean) / std
+
 
 def get_sorted_matches(data):
     """

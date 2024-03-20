@@ -9,7 +9,6 @@ from gluefactory.utils.experiments import get_best_checkpoint, get_last_checkpoi
 from gluefactory.utils.tensor import batch_to_device
 from utils import debug_batch, get_sorted_matches
 from model import get_photo_vo_model
-from utils import draw_patches, draw_matches
 
 default_train_conf = {
     "seed": "???",  # training seed
@@ -53,7 +52,7 @@ def train(model, train_loader, device, debug=False):
     for it, data in enumerate(train_loader):
         data = batch_to_device(data, device, non_blocking=True)
         output = model(data)
-        model.loss(output, data)
+        #model.loss(output, data)
         if(debug):
            debug_batch(data, output, n_pairs=1)
            plt.show()
