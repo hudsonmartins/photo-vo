@@ -19,8 +19,8 @@ class PatchEncoder(nn.Module):
         patch_dim = 3 * config.photo_vo.model.patch_size ** 2
         self.patch_emb = nn.Sequential(nn.Flatten(start_dim=2, end_dim=4),
                                        nn.LayerNorm(patch_dim),
-                                       nn.Linear(patch_dim, config.photo_vo.model.dim_patch_emb),
-                                       nn.LayerNorm(config.photo_vo.model.dim_patch_emb))
+                                       nn.Linear(patch_dim, 1023),
+                                       nn.LayerNorm(1023))
         
     def forward(self, data):
         patches = torch.cat([data['view0']['patches'], data['view1']['patches']], dim=1)
@@ -51,10 +51,10 @@ class ResNetMultiImageInput(models.ResNet):
                 nn.init.constant_(m.bias, 0)
 
 class ImagePairEncoder(nn.Module):
-    def __init__(self):
+    def __init__(self, config):
         super(ImagePairEncoder, self).__init__()
-
-        self.channels = np.array([64, 64, 128, 256, 512])
+        
+        self.channels = np.array([64, 64, 128, 256, config.photo_vo.model.dim_image_emb])
         block_type = models.resnet.BasicBlock
         layers = [2, 2, 2, 2]
         self.encoder = ResNetMultiImageInput(block_type, layers, num_input_images=2)
@@ -81,20 +81,39 @@ class ImagePairEncoder(nn.Module):
 class MotionEstimator(nn.Module):
     def __init__(self, config):
         super().__init__()
-        input_size = 2*3 + config.photo_vo.model.dim_patch_emb #num_views * num_channels + n encodings
-        
-    def forward(self, data):
-        pass
+        self.decoder_layers = [config.features_model.extractor.max_num_keypoints*2+config.photo_vo.model.dim_image_emb, 
+                               config.features_model.extractor.max_num_keypoints, 
+                               config.photo_vo.model.dim_image_emb, 128, 64, 32, 6]
+        self.flatten = nn.Sequential(nn.Flatten(start_dim=2, end_dim=3),)
 
+        # self.decoder = nn.Sequential(nn.Conv1d(config.features_model.extractor.max_num_keypoints*2 + 512, decoder_layers[0], 1),
+        #                                 nn.ReLU(),
+        #                                 nn.Conv1d(decoder_layers[0], decoder_layers[1], 1),
+        #                                 nn.ReLU(),
+        #                                 nn.Conv1d(decoder_layers[1], decoder_layers[2], 1),
+        #                                 nn.ReLU(),
+        #                                 nn.Conv1d(decoder_layers[2], decoder_layers[3], 1),
+        #                                 nn.ReLU(),
+        #                                 nn.Conv1d(decoder_layers[3], 6, 1))
+        
+
+    def forward(self, image_embs, patch_embs):
+        x = torch.cat([self.flatten(image_embs), patch_embs], dim=1)        
+        for i in range(len(self.decoder_layers)-1):
+            x = nn.Conv1d(self.decoder_layers[i], self.decoder_layers[i+1], 1)(x)
+            x = nn.ReLU()(x)
+        #global average pooling
+        x = torch.mean(x, dim=2)
+        
 
 class PhotoVoModel(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
         self.penc = PatchEncoder(config)
-        self.imgenc = ImagePairEncoder()
+        self.imgenc = ImagePairEncoder(config)
         self.matcher = gf.models.get_model(config.features_model.name)(config.features_model)
-        #self.motion_estimator = MotionEstimator(config)
+        self.motion_estimator = MotionEstimator(config)
 
     def forward(self, data):
         feats = self.matcher(data)
@@ -147,7 +166,7 @@ class PhotoVoModel(nn.Module):
         image_embs = self.imgenc(data)
         print('image embs ', image_embs.shape)
 
-
+        self.motion_estimator(image_embs, patch_embs)
         output = None
         #output = self.motion_estimator({**data, **feats})
         return output
