@@ -52,6 +52,7 @@ def train(model, train_loader, device, debug=False):
     for it, data in enumerate(train_loader):
         data = batch_to_device(data, device, non_blocking=True)
         output = model(data)
+        print(output)
         #model.loss(output, data)
         if(debug):
            debug_batch(data, output, n_pairs=1)
