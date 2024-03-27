@@ -51,21 +51,11 @@ def train(model, train_loader, device, debug=False):
     model.eval()
     for it, data in enumerate(train_loader):
         data = batch_to_device(data, device, non_blocking=True)
-        output = model(data)
-        print(output)
-        #model.loss(output, data)
+        data, output = model(data)
+        model.loss(data, output)
         if(debug):
            debug_batch(data, output, n_pairs=1)
            plt.show()
-        
-        #Compute loss
-        # depth0 = data["view0"].get("depth")
-        # depth1 = data["view1"].get("depth")
-        # camera0, camera1 = data["view0"]["camera"], data["view1"]["camera"]
-        # T_0to1, T_1to0 = data["T_0to1"], data["T_1to0"]
-        # kpts0_1 = get_kpts_projection(kpts0, depth0, camera0, camera1, T_0to1)
-        # kpts1_0 = get_kpts_projection(kpts1, depth1, camera1, camera0, T_1to0)
-        
         
 
 def main(args):

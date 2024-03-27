@@ -27,12 +27,17 @@ def photometric_loss(img0, img1):
     pe = alpha * ssim_loss + (1-alpha) * l1_loss
     return pe
 
+def patches_photometric_loss(patches0, patches1):
+    batch_size = patches0.size(0)
+    loss = 0
+    for i in range(batch_size):
+        loss += photometric_loss(patches0[i], patches1[i])
+    return loss/batch_size
 
-def pose_error(R_true, t_true, R_pred, t_pred):
+
+def pose_error(gt, pred):
     """Compute the pose error between true and predicted poses."""
     #matrix from R, t
-    pred = torch.cat((t_pred, matrix_to_euler_angles(R_pred)), dim=1)
-    gt = torch.cat((t_true, matrix_to_euler_angles(R_true)), dim=1)
     return torch.mean(torch.linalg.norm(pred - gt, dim=1, ord=2))
 
 

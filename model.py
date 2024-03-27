@@ -5,8 +5,8 @@ from torch import nn
 import gluefactory as gf
 import torchvision.models as models
 import torch.utils.model_zoo as model_zoo
-from utils import get_patches, get_sorted_matches, normalize_image
-from loss import photometric_loss, pose_error
+from utils import get_patches, get_sorted_matches, normalize_image, get_kpts_projection, matrix_to_euler_angles
+from loss import patches_photometric_loss, pose_error
 
 
 class PatchEncoder(nn.Module):
@@ -155,8 +155,43 @@ class PhotoVoModel(nn.Module):
         patch_embs = torch.cat([patch_embs, scores.unsqueeze(-1)], dim=-1)
         
         output = self.motion_estimator(image_embs, patch_embs)
-        return output
+        return {**data, **feats}, output
 
+
+    def loss(self, data, pred):
+        kpts0, kpts1 = data['keypoints0'], data['keypoints1']
+        depth0 = data["view0"].get("depth")
+        depth1 = data["view1"].get("depth")
+        camera0, camera1 = data["view0"]["camera"], data["view1"]["camera"]
+        T_0to1, T_1to0 = data["T_0to1"], data["T_1to0"]
+        kpts0_1 = get_kpts_projection(kpts0, depth0, camera0, camera1, T_0to1)
+        kpts1_0 = get_kpts_projection(kpts1, depth1, camera1, camera0, T_1to0)
+        
+        patches0 = data['view0']['patches']
+        patches1 = data['view1']['patches']
+
+        patches0_1 = get_patches(data['view0']['image'], kpts0_1, self.config.photo_vo.model.patch_size)
+        patches1_0 = get_patches(data['view1']['image'], kpts1_0, self.config.photo_vo.model.patch_size)
+        patches0_1 = torch.nan_to_num(patches0_1, nan=-1.0)
+        patches1_0 = torch.nan_to_num(patches1_0, nan=-1.0)
+
+        pl0 = patches_photometric_loss(patches0, patches0_1)
+        pl1 = patches_photometric_loss(patches1, patches1_0)
+        pl = (pl0 + pl1)/2
+        print('photometric loss ', pl)
+        
+        gt_R = data['T_0to1'].R
+        gt_t = data['T_0to1'].t
+        print('gt R ', gt_R)
+        print('gt t ', gt_t)
+
+        gt = torch.cat((gt_t, matrix_to_euler_angles(gt_R, "XYZ")), dim=1)
+
+        print('gt ', gt)
+        pose_error_loss = pose_error(gt, pred)
+        print('pose error loss ', pose_error_loss)
+
+        pass
     
 def get_photo_vo_model(config):
     return PhotoVoModel(config)
