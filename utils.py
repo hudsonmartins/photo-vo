@@ -35,16 +35,15 @@ def get_sorted_matches(data):
     return b_mcfs
     
 
-def debug_batch(data, pred, n_pairs=2):
+def debug_batch(data, n_pairs=2):
     '''
     Visualize the first n_pairs in the batch
     Copied from gluefactory.visualization.visualize_batch.py
     '''
-    if "0to1" in pred.keys():
-        pred = pred["0to1"]
+    if "0to1" in data.keys():
+        data = data["0to1"]
     
     data = batch_to_device(data, "cpu", non_blocking=False)
-    pred = batch_to_device(pred, "cpu", non_blocking=False)
     images, kpts, matches, mcolors = [], [], [], []
     heatmaps = []
     view0, view1 = data["view0"], data["view1"]
@@ -52,8 +51,8 @@ def debug_batch(data, pred, n_pairs=2):
     n_pairs = min(n_pairs, view0["image"].shape[0])
     
     assert view0["image"].shape[0] >= n_pairs
-    kp0, kp1 = pred["keypoints0"], pred["keypoints1"]
-    m0 = pred["matches0"]
+    kp0, kp1 = data["keypoints0"], data["keypoints1"]
+    m0 = data["matches0"]
     
     for i in range(n_pairs):
         valid = (m0[i] > -1)
@@ -66,11 +65,11 @@ def debug_batch(data, pred, n_pairs=2):
 
         correct = m0[i][valid]
 
-        if "heatmap0" in pred.keys():
+        if "heatmap0" in data.keys():
             heatmaps.append(
                 [
-                    torch.sigmoid(pred["heatmap0"][i, 0]),
-                    torch.sigmoid(pred["heatmap1"][i, 0]),
+                    torch.sigmoid(data["heatmap0"][i, 0]),
+                    torch.sigmoid(data["heatmap1"][i, 0]),
                 ]
             )
         elif "depth" in view0.keys() and view0["depth"] is not None:

@@ -111,6 +111,7 @@ class PhotoVoModel(nn.Module):
 
         # Extract and match features
         feats = self.matcher(data)
+
         kpts0, kpts1 = feats['keypoints0'], feats['keypoints1']
 
         sorted_matches = get_sorted_matches(feats)
@@ -155,10 +156,12 @@ class PhotoVoModel(nn.Module):
         patch_embs = torch.cat([patch_embs, scores.unsqueeze(-1)], dim=-1)
         
         output = self.motion_estimator(image_embs, patch_embs)
-        return {**data, **feats}, output
+        data['pred_vo'] = output
+        return {**data, **feats}
 
 
-    def loss(self, data, pred):
+    def loss(self, data):
+        pred = data['pred_vo']
         kpts0, kpts1 = data['keypoints0'], data['keypoints1']
         depth0 = data["view0"].get("depth")
         depth1 = data["view1"].get("depth")
@@ -178,18 +181,11 @@ class PhotoVoModel(nn.Module):
         pl0 = patches_photometric_loss(patches0, patches0_1)
         pl1 = patches_photometric_loss(patches1, patches1_0)
         pl = (pl0 + pl1)/2
-        print('photometric loss ', pl)
-        
+
         gt_R = data['T_0to1'].R
         gt_t = data['T_0to1'].t
-        print('gt R ', gt_R)
-        print('gt t ', gt_t)
-
         gt = torch.cat((gt_t, matrix_to_euler_angles(gt_R, "XYZ")), dim=1)
-
-        print('gt ', gt)
         pose_error_loss = pose_error(gt, pred)
-        print('pose error loss ', pose_error_loss)
 
         pass
     
