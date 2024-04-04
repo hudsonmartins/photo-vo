@@ -104,17 +104,18 @@ class PhotoVoModel(nn.Module):
         self.matcher = gf.models.get_model(config.features_model.name)(config.features_model)
         self.penc = PatchEncoder(config)
         self.motion_estimator = MotionEstimator(config)
+        self.features = None
 
     def forward(self, data):
         # Encode images
         image_embs = self.imgenc(data)
 
         # Extract and match features
-        feats = self.matcher(data)
+        self.features = self.matcher(data)
 
-        kpts0, kpts1 = feats['keypoints0'], feats['keypoints1']
+        kpts0, kpts1 = self.features['keypoints0'], self.features['keypoints1']
 
-        sorted_matches = get_sorted_matches(feats)
+        sorted_matches = get_sorted_matches(self.features)
         b_valid_matches = []
         for b in range(sorted_matches.size(0)):
             valid_matches = []
@@ -130,8 +131,8 @@ class PhotoVoModel(nn.Module):
         # Indexing kpts0 and kpts1 with valid matches
         kpts0_valid = kpts0[:,m0,:]
         kpts1_valid = kpts1[:,m1,:]
-        scores0_valid = feats['matching_scores0'][:,m0]
-        scores1_valid = feats['matching_scores1'][:,m1]
+        scores0_valid = self.features['matching_scores0'][:,m0]
+        scores1_valid = self.features['matching_scores1'][:,m1]
         
         # Fill the invalid kpts with nan
         kpts0 = torch.cat([kpts0_valid, torch.full((kpts0_valid.size(0), kpts0.size(1)-kpts0_valid.size(1), kpts0_valid.size(2)), float('nan'), dtype=kpts0_valid.dtype, device=kpts0_valid.device)], dim=1)
@@ -157,7 +158,7 @@ class PhotoVoModel(nn.Module):
         
         output = self.motion_estimator(image_embs, patch_embs)
         data['pred_vo'] = output
-        return {**data, **feats}
+        return {**data, **self.features}
 
 
     def loss(self, data):
@@ -185,9 +186,12 @@ class PhotoVoModel(nn.Module):
         gt_R = data['T_0to1'].R
         gt_t = data['T_0to1'].t
         gt = torch.cat((gt_t, matrix_to_euler_angles(gt_R, "XYZ")), dim=1)
-        pose_error_loss = pose_error(gt, pred)
+        pe = pose_error(gt, pred)
 
-        pass
+        match_losses, _ = self.matcher.loss(self.features, data)
+        ml = match_losses['total']
+        return pl + pe + ml
+        
     
 def get_photo_vo_model(config):
     return PhotoVoModel(config)

@@ -47,14 +47,16 @@ default_train_conf = {
 default_train_conf = OmegaConf.create(default_train_conf)
 
 
-def train(model, train_loader, device, loss_fn, debug=False):
+def train(model, train_loader, device, debug=False):
     model.eval()
     for it, data in enumerate(train_loader):
         data = batch_to_device(data, device, non_blocking=True)
-        data = model(data)
-        model.loss(data)
+        output = model(data)
+        loss = model.loss(output)
+        loss.backward()
+
         if(debug):
-           debug_batch(data, n_pairs=1)
+           debug_batch(output, n_pairs=1)
            plt.show()
         
 
@@ -112,10 +114,9 @@ def main(args):
     photo_vo_model.matcher.to(device)
     if args.compile:
         photo_vo_model.matcher = torch.compile(photo_vo_model.matcher, mode=args.compile)
-    loss_fn = photo_vo_model.matcher.loss
     if init_cp is not None:
-        photo_vo_model.matcher.load_state_dict(init_cp["model"], strict=False)
-    train(photo_vo_model, train_loader, device, loss_fn, args.debug)
+        photo_vo_model.load_state_dict(init_cp["model"], strict=False)
+    train(photo_vo_model, train_loader, device, args.debug)
 
 
 if __name__ == "__main__":
