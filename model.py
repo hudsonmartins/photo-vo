@@ -190,7 +190,8 @@ class PhotoVoModel(nn.Module):
 
         match_losses, _ = self.matcher.loss(self.features, data)
         ml = match_losses['total']
-        return pl + pe + ml
+        loss = {'photometric_loss': pl, 'pose_error': pe, 'match_loss': ml, 'total': pl + pe + ml}
+        return loss
         
     
 def get_photo_vo_model(config):

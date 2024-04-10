@@ -35,7 +35,7 @@ def get_sorted_matches(data):
     return b_mcfs
     
 
-def debug_batch(data, n_pairs=2):
+def debug_batch(data, loss, n_pairs=2):
     '''
     Visualize the first n_pairs in the batch
     Copied from gluefactory.visualization.visualize_batch.py
@@ -85,6 +85,10 @@ def debug_batch(data, n_pairs=2):
         plot_matches(*matches[i], color=mcolors[i], axes=axes[i], a=0.5, lw=1.0, ps=0.0)
         for i in range(n_pairs)
     ]
+        
+    loss_title = ", ".join([f"{k}: {v.item():.4f}" for k, v in loss.items()])
+    fig.suptitle(loss_title)
+
     return fig
 
 def get_kpts_projection(kpts, depth, camera0, camera1, T_0to1):
