@@ -1,12 +1,12 @@
 import torch
-import cv2
+import tqdm
 import argparse
 import matplotlib.pyplot as plt
 from omegaconf import OmegaConf
 from gluefactory import logger
 from gluefactory.datasets import get_dataset
-from gluefactory.utils.experiments import get_best_checkpoint, get_last_checkpoint, save_experiment
 from gluefactory.utils.tensor import batch_to_device
+from gluefactory.utils.experiments import get_last_checkpoint, get_best_checkpoint
 from torch.utils.tensorboard import SummaryWriter
 
 from utils import debug_batch, get_sorted_matches
@@ -43,7 +43,7 @@ default_train_conf = OmegaConf.create(default_train_conf)
 
 def train(model, train_loader, val_loader, optimizer, device, config, debug=False):
     writer = SummaryWriter(log_dir=config.train.tensorboard_dir)
-
+    best_loss = float("inf")
     for it, data in enumerate(train_loader):
         model.train()
         optimizer.zero_grad()
@@ -58,7 +58,7 @@ def train(model, train_loader, val_loader, optimizer, device, config, debug=Fals
         optimizer.step()
 
         if(debug):
-           debug_batch(output, loss, n_pairs=1)
+           debug_batch(output, n_pairs=1)
            plt.show()
         
         if(it % config.train.log_every_iter == 0):
@@ -67,29 +67,54 @@ def train(model, train_loader, val_loader, optimizer, device, config, debug=Fals
             writer.add_scalar("train/loss/photometric", loss['photometric_loss'].item(), it)
             writer.add_scalar("train/loss/pose", loss['pose_error'].item(), it)
             writer.add_scalar("train/loss/match", loss['match_loss'].item(), it)
-            fig = debug_batch(output, loss, n_pairs=1)
+            fig = debug_batch(output, n_pairs=1)
             writer.add_figure("train/fig/debug", fig, it)
 
-        #validation                
-        # if(it % config.train.eval_every_iter == 0 or it == (len(train_loader) - 1)):
-        #     model.eval()
-        #     with torch.no_grad():
-        #         for it, data in enumerate(val_loader):
-        #             data = batch_to_device(data, device, non_blocking=True)
-        #             output = model(data)
-        #             loss = model.loss(output)
-        #             if torch.isnan(loss['total']).any():
-        #                 print(f"Detected NAN, skipping iteration {it}")
-        #                 del output
-        #                 continue
-        #             logger.info(f"[Val] Iteration {it} Loss: {loss['total'].item()}")
-        #             writer.add_scalar("val/loss/total", loss['total'].item(), it)
-        #             writer.add_scalar("val/loss/photometric", loss['photometric_loss'].item(), it)
-        #             writer.add_scalar("val/loss/pose", loss['pose_error'].item(), it)
-        #             writer.add_scalar("val/loss/match", loss['match_loss'].item(), it)
-        #             fig = debug_batch(output, loss, n_pairs=1)
-        #             writer.add_figure("val/fig/debug", fig, it)
-                
+        #validation            
+        if(it % config.train.eval_every_iter == 0 or it == (len(train_loader) - 1)):
+            model.eval()
+            avg_losses = {k: 0 for k in loss.keys()}
+            #for it, data in enumerate(tqdm(val_loader, desc="Validation", ascii=True)):
+            for it, data in enumerate(val_loader):
+                data = batch_to_device(data, device, non_blocking=True)
+                with torch.no_grad():
+                    output = model(data)
+                    loss = model.loss(output)
+                    avg_losses = {k: v + loss[k].item() for k, v in avg_losses.items()}
+                    if torch.isnan(loss['total']).any():
+                        print(f"Detected NAN, skipping iteration {it}")
+                        del output
+                        continue
+            avg_losses = {k: v / len(val_loader) for k, v in avg_losses.items()}
+            
+
+            logger.info(f"[Val] Loss: {avg_losses['total']}")
+            writer.add_scalar("val/loss/total", avg_losses['total'], it)
+            writer.add_scalar("val/loss/photometric", avg_losses['photometric_loss'], it)
+            writer.add_scalar("val/loss/pose", avg_losses['pose_error'], it)
+            writer.add_scalar("val/loss/match", avg_losses['match_loss'], it)
+            fig = debug_batch(output, n_pairs=3)
+            writer.add_figure("val/fig/debug", fig, it)        
+        
+            if(avg_losses['total'] < best_loss):
+                    best_loss = avg_losses['total']
+                    logger.info(f"Found best model with loss {best_loss}. Saving checkpoint.")
+                    torch.save({
+                        "model": model.state_dict(),
+                        "optimizer": optimizer.state_dict(),
+                        "conf": OmegaConf.to_container(config, resolve=True),
+                        "epoch": it,
+                    }, f"checkpoint_best.tar") 
+
+        if(it % config.train.save_every_iter == 0 or it == (len(train_loader) - 1)):
+            logger.info(f"Saving checkpoint at iteration {it}")
+            torch.save({
+                "model": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "conf": OmegaConf.to_container(config, resolve=True),
+                "epoch": it,
+            }, f"checkpoint_{it}.tar")
+
 
 def main(args):
     logger.info('Training with the following configuration: ')
@@ -109,18 +134,14 @@ def main(args):
         init_cp = torch.load(str(init_cp), map_location="cpu")
         conf = OmegaConf.merge(OmegaConf.create(init_cp["conf"]), conf)
         conf.train = OmegaConf.merge(default_train_conf, conf.train)
-        epoch = init_cp["epoch"] + 1
 
         # get the best loss or eval metric from the previous best checkpoint
         best_cp = get_best_checkpoint(args.experiment)
         best_cp = torch.load(str(best_cp), map_location="cpu")
-        best_eval = best_cp["eval"][conf.train.best_key]
         del best_cp
     else:
         # we start a new, fresh training
         conf.train = OmegaConf.merge(default_train_conf, conf.train)
-        epoch = 0
-        best_eval = float("inf")
         if conf.train.load_experiment:
             logger.info(f"Will fine-tune from weights of {conf.train.load_experiment}")
             # the user has to make sure that the weights are compatible
