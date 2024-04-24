@@ -5,6 +5,7 @@ import matplotlib.cm as cm
 from gluefactory.geometry.depth import sample_depth, project
 from gluefactory.utils.tensor import batch_to_device
 from gluefactory.visualization.viz2d import plot_heatmaps, plot_image_grid, plot_keypoints, plot_matches, cm_RdGn
+from gluefactory.geometry.wrappers import Pose
 
 def normalize_image(image):
     """
@@ -44,9 +45,14 @@ def debug_batch(data, n_pairs=2):
         data = data["0to1"]
     
     data = batch_to_device(data, "cpu", non_blocking=False)
-    images, kpts, matches, mcolors = [], [], [], []
+    images, kpts, matches, mcolors, images_projs = [], [], [], [], []
     heatmaps = []
     view0, view1 = data["view0"], data["view1"]
+    pred = data["pred_vo"]
+    R_pred = euler_angles_to_matrix(pred[..., 3:], "XYZ")
+    t_pred = pred[..., :3]
+    T_0to1_pred = Pose.from_Rt(R_pred, t_pred)
+    T_1to0_pred = T_0to1_pred.inv()
 
     n_pairs = min(n_pairs, view0["image"].shape[0])
     
@@ -76,8 +82,13 @@ def debug_batch(data, n_pairs=2):
             heatmaps.append([view0["depth"][i], view1["depth"][i]])
 
         mcolors.append(cm_RdGn(correct).tolist())
+        
+        # kpts0_1 = get_kpts_projection(kp0[i][valid], view0["depth"][i], view0["camera"], view1["camera"], T_0to1_pred)
+        # img_proj0 = draw_patches(images[i][1], kpts0_1[0], color=(0,255,0))
+        #img_proj1 = draw_patches(images[i][0], kpts1_0[0], color=(0,255,0))
+        #images_projs.append([img_proj0,img_proj1])
 
-    fig, axes = plot_image_grid(images, return_fig=True, set_lim=True)
+    fig_matches, axes = plot_image_grid(images, return_fig=True, set_lim=True)
     if len(heatmaps) > 0:
        [plot_heatmaps(heatmaps[i], axes=axes[i], a=1.0) for i in range(n_pairs)]
     [plot_keypoints(kpts[i], axes=axes[i], colors="royalblue") for i in range(n_pairs)]
@@ -86,7 +97,9 @@ def debug_batch(data, n_pairs=2):
         for i in range(n_pairs)
     ]
 
-    return fig
+    #fig_projs, axes = plot_image_grid(images_projs, return_fig=True, set_lim=True)   
+    
+    return fig_matches, None
 
 def get_kpts_projection(kpts, depth, camera0, camera1, T_0to1):
     d, valid = sample_depth(kpts, depth)
@@ -327,3 +340,32 @@ def matrix_to_euler_angles(matrix: torch.Tensor, convention: str) -> torch.Tenso
         ),
     )
     return torch.stack(o, -1)
+
+def euler_angles_to_matrix(euler_angles: torch.Tensor, convention: str) -> torch.Tensor:
+    """
+    Extracted from https://github.com/facebookresearch/pytorch3d
+    Convert rotations given as Euler angles in radians to rotation matrices.
+
+    Args:
+        euler_angles: Euler angles in radians as tensor of shape (..., 3).
+        convention: Convention string of three uppercase letters from
+            {"X", "Y", and "Z"}.
+
+    Returns:
+        Rotation matrices as tensor of shape (..., 3, 3).
+    """
+    if euler_angles.dim() == 0 or euler_angles.shape[-1] != 3:
+        raise ValueError("Invalid input euler angles.")
+    if len(convention) != 3:
+        raise ValueError("Convention must have 3 letters.")
+    if convention[1] in (convention[0], convention[2]):
+        raise ValueError(f"Invalid convention {convention}.")
+    for letter in convention:
+        if letter not in ("X", "Y", "Z"):
+            raise ValueError(f"Invalid letter {letter} in convention string.")
+    matrices = [
+        _axis_angle_rotation(c, e)
+        for c, e in zip(convention, torch.unbind(euler_angles, -1))
+    ]
+    # return functools.reduce(torch.matmul, matrices)
+    return torch.matmul(torch.matmul(matrices[0], matrices[1]), matrices[2])

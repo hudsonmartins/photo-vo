@@ -9,6 +9,7 @@ from omegaconf import OmegaConf
 from gluefactory import logger
 from gluefactory.datasets import get_dataset
 from gluefactory.utils.tensor import batch_to_device
+
 from torch.utils.tensorboard import SummaryWriter
 
 from utils import debug_batch, get_sorted_matches
@@ -55,10 +56,10 @@ def train(model, train_loader, val_loader, optimizer, device, config, debug=Fals
             writer.add_scalar("train/loss/photometric", loss['photometric_loss'].item(), it)
             writer.add_scalar("train/loss/pose", loss['pose_error'].item(), it)
             writer.add_scalar("train/loss/match", loss['match_loss'].item(), it)
-            fig = debug_batch(output, n_pairs=1)
-            writer.add_figure("train/fig/debug", fig, it)
+            fig_matches, fig_projs = debug_batch(output, n_pairs=1)
+            writer.add_figure("train/fig/matches", fig_matches, it)
 
-        #validation            
+        #validation
         if(it % config.train.eval_every_iter == 0 or it == (len(train_loader) - 1)):
             model.eval()
             avg_losses = {k: 0 for k in loss.keys()}
@@ -81,8 +82,8 @@ def train(model, train_loader, val_loader, optimizer, device, config, debug=Fals
             writer.add_scalar("val/loss/photometric", avg_losses['photometric_loss'], it)
             writer.add_scalar("val/loss/pose", avg_losses['pose_error'], it)
             writer.add_scalar("val/loss/match", avg_losses['match_loss'], it)
-            fig = debug_batch(output, n_pairs=3)
-            writer.add_figure("val/fig/debug", fig, it)        
+            fig_matches, fig_projs = debug_batch(output, n_pairs=3)
+            writer.add_figure("val/fig/matches", fig_matches, it)        
         
             if(avg_losses['total'] < config.train.best_loss):
                     best_loss = avg_losses['total']
@@ -117,13 +118,13 @@ def main(args):
         logger.info(f"Restoring from previous training of {args.experiment}")
         ckpts = glob.glob(os.path.join(args.experiment, "checkpoint_*.tar"))
         ckpts = [os.path.basename(ckpt) for ckpt in ckpts]
-        print('ckpts', ckpts)
         if len(ckpts) > 0:
             init_cp_name = sorted(ckpts)[-1]
-            print('init_cp_name', init_cp_name)
             init_cp = torch.load(os.path.join(args.experiment, init_cp_name), map_location="cpu")
+            logger.info(f"Will load model {init_cp_name}")
         else:
             init_cp = torch.load(os.path.join(args.experiment, "best_model.tar"), map_location="cpu")
+            logger.info(f"Will load model best_model.tar")
         
         conf = OmegaConf.merge(OmegaConf.create(init_cp["conf"]), conf)
         conf.train = OmegaConf.merge(default_train_conf, conf.train)
@@ -134,13 +135,14 @@ def main(args):
             logger.info(f"Will fine-tune from weights of {conf.train.load_experiment}")
             ckpts = glob.glob(os.path.join(args.experiment, "checkpoint_*.tar"))
             ckpts = [os.path.basename(ckpt) for ckpt in ckpts]
-            print('ckpts', ckpts)
             if len(ckpts) > 0:
                 init_cp_name = sorted(ckpts)[-1]
-                print('init_cp_name', init_cp_name)
                 init_cp = torch.load(os.path.join(args.experiment, init_cp_name), map_location="cpu")
+                logger.info(f"Will load model {init_cp_name}")
             else:
                 init_cp = torch.load(os.path.join(args.experiment, "best_model.tar"), map_location="cpu")
+                logger.info(f"Will load model best_model.tar")
+
 
             # load the model config of the old setup, and overwrite with current config
             conf.photo_vo = OmegaConf.merge(

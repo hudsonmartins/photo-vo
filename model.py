@@ -3,9 +3,11 @@ import torch
 import numpy as np
 from torch import nn
 import gluefactory as gf
+from gluefactory.geometry.wrappers import Pose
+
 import torchvision.models as models
 import torch.utils.model_zoo as model_zoo
-from utils import get_patches, get_sorted_matches, normalize_image, get_kpts_projection, matrix_to_euler_angles
+from utils import get_patches, get_sorted_matches, normalize_image, get_kpts_projection, matrix_to_euler_angles, euler_angles_to_matrix
 from loss import patches_photometric_loss, pose_error
 
 
@@ -167,9 +169,18 @@ class PhotoVoModel(nn.Module):
         depth0 = data["view0"].get("depth")
         depth1 = data["view1"].get("depth")
         camera0, camera1 = data["view0"]["camera"], data["view1"]["camera"]
-        T_0to1, T_1to0 = data["T_0to1"], data["T_1to0"]
-        kpts0_1 = get_kpts_projection(kpts0, depth0, camera0, camera1, T_0to1)
-        kpts1_0 = get_kpts_projection(kpts1, depth1, camera1, camera0, T_1to0)
+        #T_0to1, T_1to0 = data["T_0to1"], data["T_1to0"]
+
+        #GT PROJECTIONS
+        #kpts0_1 = get_kpts_projection(kpts0, depth0, camera0, camera1, T_0to1)
+        #kpts1_0 = get_kpts_projection(kpts1, depth1, camera1, camera0, T_1to0)
+
+        R_pred = euler_angles_to_matrix(pred[..., 3:], "XYZ")
+        t_pred = pred[..., :3]
+        T_0to1_pred = Pose.from_Rt(R_pred, t_pred)
+        T_1to0_pred = T_0to1_pred.inv()
+        kpts0_1 = get_kpts_projection(kpts0, depth0, camera0, camera1, T_0to1_pred)
+        kpts1_0 = get_kpts_projection(kpts1, depth1, camera1, camera0, T_1to0_pred)
         
         patches0 = data['view0']['patches']
         patches1 = data['view1']['patches']

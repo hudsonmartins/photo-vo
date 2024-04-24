@@ -39,7 +39,6 @@ def patches_photometric_loss(patches0, patches1):
 
 def pose_error(gt, pred):
     """Compute the pose error between true and predicted poses."""
-    #matrix from R, t
     return torch.mean(torch.linalg.norm(pred - gt, dim=1, ord=2))
 
 
