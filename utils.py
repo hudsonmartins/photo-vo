@@ -45,7 +45,7 @@ def debug_batch(data, n_pairs=2):
         data = data["0to1"]
     
     data = batch_to_device(data, "cpu", non_blocking=False)
-    images, kpts, matches, mcolors, images_projs = [], [], [], [], []
+    images, kpts, matches, mcolors, images_patches = [], [], [], [], []
     heatmaps = []
     view0, view1 = data["view0"], data["view1"]
     pred = data["pred_vo"]
@@ -53,7 +53,11 @@ def debug_batch(data, n_pairs=2):
     t_pred = pred[..., :3]
     T_0to1_pred = Pose.from_Rt(R_pred, t_pred)
     T_1to0_pred = T_0to1_pred.inv()
+    kpts0_1_pred = get_kpts_projection(view0['patches_coords'], view0.get("depth"), view0["camera"], view1["camera"], T_0to1_pred)
+    kpts1_0_pred = get_kpts_projection(view1['patches_coords'], view1.get("depth"), view1["camera"], view0["camera"], T_1to0_pred)
 
+    kpts0_1_gt = get_kpts_projection(view0['patches_coords'], view0.get("depth"), view0["camera"], view1["camera"], data["T_0to1"])
+    kpts1_0_gt = get_kpts_projection(view1['patches_coords'], view1.get("depth"), view1["camera"], view0["camera"], data["T_1to0"])
     n_pairs = min(n_pairs, view0["image"].shape[0])
     
     assert view0["image"].shape[0] >= n_pairs
@@ -83,10 +87,19 @@ def debug_batch(data, n_pairs=2):
 
         mcolors.append(cm_RdGn(correct).tolist())
         
-        # kpts0_1 = get_kpts_projection(kp0[i][valid], view0["depth"][i], view0["camera"], view1["camera"], T_0to1_pred)
-        # img_proj0 = draw_patches(images[i][1], kpts0_1[0], color=(0,255,0))
-        #img_proj1 = draw_patches(images[i][0], kpts1_0[0], color=(0,255,0))
-        #images_projs.append([img_proj0,img_proj1])
+        img_patches0 = draw_patches(view0["image"][i].permute(1, 2, 0)*255, data['view0']['patches_coords'][i], color=(0,255,0))
+        img_patches1 = draw_patches(view1["image"][i].permute(1, 2, 0)*255, data['view1']['patches_coords'][i], color=(0,255,0))
+
+        img_patches0 = draw_patches(img_patches0, kpts1_0_pred[i].squeeze(0), color=(255,0,0))
+        img_patches1 = draw_patches(img_patches1, kpts0_1_pred[i].squeeze(0), color=(255,0,0))
+
+        img_patches0 = draw_patches(img_patches0, kpts0_1_gt[i].squeeze(0), color=(0,0,255))
+        img_patches1 = draw_patches(img_patches1, kpts1_0_gt[i].squeeze(0), color=(0,0,255))
+        
+        img_patches0 = cv2.putText(img_patches0, 'Green: Exctracted', (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1, cv2.LINE_AA)
+        img_patches0 = cv2.putText(img_patches0, 'Red: Predicted Projection', (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0), 1, cv2.LINE_AA)
+        img_patches0 = cv2.putText(img_patches0, 'Blue: Ground Truth Projection', (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1, cv2.LINE_AA)
+        images_patches.append([img_patches0, img_patches1])
 
     fig_matches, axes = plot_image_grid(images, return_fig=True, set_lim=True)
     if len(heatmaps) > 0:
@@ -97,9 +110,9 @@ def debug_batch(data, n_pairs=2):
         for i in range(n_pairs)
     ]
 
-    #fig_projs, axes = plot_image_grid(images_projs, return_fig=True, set_lim=True)   
-    
-    return fig_matches, None
+    fig_patches, axes = plot_image_grid(images_patches, return_fig=True, set_lim=True)   
+    return fig_matches, fig_patches
+
 
 def get_kpts_projection(kpts, depth, camera0, camera1, T_0to1):
     d, valid = sample_depth(kpts, depth)
@@ -115,7 +128,7 @@ def get_kpts_projection(kpts, depth, camera0, camera1, T_0to1):
     return kpts, kpts_1
 
     
-def draw_patches(img, kpts, color=(0,0,255), patch_size=10):
+def draw_patches(img, kpts, color=(0,0,255), patch_size=16):
     """Draw patches around keypoints on an image"""
     half = patch_size // 2
     for pt in kpts:

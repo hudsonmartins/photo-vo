@@ -147,6 +147,8 @@ class PhotoVoModel(nn.Module):
         # Fill the invalid patches with -1
         patches0 = torch.nan_to_num(patches0, nan=-1.0)
         patches1 = torch.nan_to_num(patches1, nan=-1.0)
+        data['view0']['patches_coords'] = kpts0
+        data['view1']['patches_coords'] = kpts1
         data['view0']['patches'] = patches0
         data['view1']['patches'] = patches1
         # Encode patches
@@ -165,16 +167,12 @@ class PhotoVoModel(nn.Module):
 
     def loss(self, data):
         pred = data['pred_vo']
-        kpts0, kpts1 = data['keypoints0'], data['keypoints1']
+        kpts0, kpts1 = data['view0']['patches_coords'], data['view1']['patches_coords']
         depth0 = data["view0"].get("depth")
         depth1 = data["view1"].get("depth")
         camera0, camera1 = data["view0"]["camera"], data["view1"]["camera"]
-        #T_0to1, T_1to0 = data["T_0to1"], data["T_1to0"]
 
-        #GT PROJECTIONS
-        #kpts0_1 = get_kpts_projection(kpts0, depth0, camera0, camera1, T_0to1)
-        #kpts1_0 = get_kpts_projection(kpts1, depth1, camera1, camera0, T_1to0)
-
+        #Compute projections with predicted camera pose
         R_pred = euler_angles_to_matrix(pred[..., 3:], "XYZ")
         t_pred = pred[..., :3]
         T_0to1_pred = Pose.from_Rt(R_pred, t_pred)
@@ -201,7 +199,10 @@ class PhotoVoModel(nn.Module):
 
         match_losses, _ = self.matcher.loss(self.features, data)
         ml = match_losses['total']
-        loss = {'photometric_loss': pl, 'pose_error': pe, 'match_loss': ml, 'total': pl + pe + ml}
+        w1 = self.config.photo_vo.model.loss_weights.photometric
+        w2 = self.config.photo_vo.model.loss_weights.pose
+        w3 = self.config.photo_vo.model.loss_weights.match
+        loss = {'photometric_loss': pl, 'pose_error': pe, 'match_loss': ml, 'total': w1*pl + w2*pe + w3*ml}
         return loss
         
     
