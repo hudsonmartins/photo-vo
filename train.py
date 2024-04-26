@@ -1,4 +1,4 @@
-import os
+import os, sys
 import torch
 import glob
 import argparse
@@ -49,7 +49,7 @@ def train(model, train_loader, val_loader, optimizer, device, config, debug=Fals
         if(debug):
            debug_batch(output, n_pairs=1)
            plt.show()
-        
+
         if(it % config.train.log_every_iter == 0):
             logger.info(f"[Train] Iteration {it} Loss: {loss['total'].item()}")
             writer.add_scalar("train/loss/total", loss['total'].item(), it)

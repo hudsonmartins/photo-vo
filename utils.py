@@ -53,16 +53,21 @@ def debug_batch(data, n_pairs=2):
     t_pred = pred[..., :3]
     T_0to1_pred = Pose.from_Rt(R_pred, t_pred)
     T_1to0_pred = T_0to1_pred.inv()
-    kpts0_1_pred = get_kpts_projection(view0['patches_coords'], view0.get("depth"), view0["camera"], view1["camera"], T_0to1_pred)
-    kpts1_0_pred = get_kpts_projection(view1['patches_coords'], view1.get("depth"), view1["camera"], view0["camera"], T_1to0_pred)
 
-    kpts0_1_gt = get_kpts_projection(view0['patches_coords'], view0.get("depth"), view0["camera"], view1["camera"], data["T_0to1"])
-    kpts1_0_gt = get_kpts_projection(view1['patches_coords'], view1.get("depth"), view1["camera"], view0["camera"], data["T_1to0"])
     n_pairs = min(n_pairs, view0["image"].shape[0])
     
     assert view0["image"].shape[0] >= n_pairs
     kp0, kp1 = data["keypoints0"], data["keypoints1"]
+    depth0 = view0.get("depth")
+    depth1 = view1.get("depth")
+    camera0, camera1 = view0["camera"], view1["camera"]
+
     m0 = data["matches0"]
+    kpts0_gt, kpts0_1_gt = get_kpts_projection(view0['patches_coords'], depth0, depth1, camera0, camera1, data["T_0to1"])
+    kpts1_gt, kpts1_0_gt = get_kpts_projection(view1['patches_coords'], depth1, depth0, camera1, camera0, data["T_1to0"])
+    
+    _, kpts0_1_pred = get_kpts_projection(view0['patches_coords'], depth0, depth1, camera0, camera1, T_0to1_pred)
+    _, kpts1_0_pred = get_kpts_projection(view1['patches_coords'], depth1, depth0, camera1, camera0, T_1to0_pred)
     
     for i in range(n_pairs):
         valid = (m0[i] > -1)
@@ -87,14 +92,14 @@ def debug_batch(data, n_pairs=2):
 
         mcolors.append(cm_RdGn(correct).tolist())
         
-        img_patches0 = draw_patches(view0["image"][i].permute(1, 2, 0)*255, data['view0']['patches_coords'][i], color=(0,255,0))
-        img_patches1 = draw_patches(view1["image"][i].permute(1, 2, 0)*255, data['view1']['patches_coords'][i], color=(0,255,0))
+        img_patches0 = draw_patches(view0["image"][i].permute(1, 2, 0)*255, kpts0_gt[i], color=(0,255,0))
+        img_patches1 = draw_patches(view1["image"][i].permute(1, 2, 0)*255, kpts1_gt[i], color=(0,255,0))
 
-        img_patches0 = draw_patches(img_patches0, kpts1_0_pred[i].squeeze(0), color=(255,0,0))
-        img_patches1 = draw_patches(img_patches1, kpts0_1_pred[i].squeeze(0), color=(255,0,0))
-
-        img_patches0 = draw_patches(img_patches0, kpts0_1_gt[i].squeeze(0), color=(0,0,255))
-        img_patches1 = draw_patches(img_patches1, kpts1_0_gt[i].squeeze(0), color=(0,0,255))
+        img_patches0 = draw_patches(img_patches0, kpts1_0_pred[i].detach().numpy(), color=(255,0,0))
+        img_patches1 = draw_patches(img_patches1, kpts0_1_pred[i].detach().numpy(), color=(255,0,0))
+        
+        img_patches0 = draw_patches(img_patches0, kpts1_0_gt[i], color=(0,0,255))
+        img_patches1 = draw_patches(img_patches1, kpts0_1_gt[i], color=(0,0,255))
         
         img_patches0 = cv2.putText(img_patches0, 'Green: Exctracted', (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1, cv2.LINE_AA)
         img_patches0 = cv2.putText(img_patches0, 'Red: Predicted Projection', (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0), 1, cv2.LINE_AA)
@@ -114,18 +119,18 @@ def debug_batch(data, n_pairs=2):
     return fig_matches, fig_patches
 
 
-def get_kpts_projection(kpts, depth, camera0, camera1, T_0to1):
-    d, valid = sample_depth(kpts, depth)
-    kpts = kpts * valid.unsqueeze(-1)
+def get_kpts_projection(kpts, depth0, depth1, camera0, camera1, T_0to1):
+    d, valid = sample_depth(kpts, depth0)
 
     kpts_1, visible = project(
-        kpts, d, depth, camera0, camera1, T_0to1, valid
+        kpts, d, depth1, camera0, camera1, T_0to1, valid
     )
-    kpts = kpts * visible.unsqueeze(-1)
+    #kpts = kpts * valid.unsqueeze(-1)
+    kpts_visible = kpts * visible.unsqueeze(-1)
     kpts_1 = kpts_1 * visible.unsqueeze(-1)
-    kpts[~visible] = float('nan')
+    kpts_visible[~visible] = float('nan')
     kpts_1[~visible] = float('nan')
-    return kpts, kpts_1
+    return kpts_visible, kpts_1
 
     
 def draw_patches(img, kpts, color=(0,0,255), patch_size=16):
