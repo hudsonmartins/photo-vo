@@ -171,7 +171,7 @@ class PhotoVoModel(nn.Module):
         depth0 = data["view0"].get("depth")
         depth1 = data["view1"].get("depth")
         camera0, camera1 = data["view0"]["camera"], data["view1"]["camera"]
-
+        data['photo_loss'] = {}
         #Compute projections with predicted camera pose
         R_pred = euler_angles_to_matrix(pred[..., 3:], "XYZ")
         t_pred = pred[..., :3]
@@ -179,13 +179,26 @@ class PhotoVoModel(nn.Module):
         T_1to0_pred = T_0to1_pred.inv()
         kpts0, kpts0_1 = get_kpts_projection(kpts0, depth0, depth1, camera0, camera1, T_0to1_pred)
         kpts1, kpts1_0 = get_kpts_projection(kpts1, depth1, depth0, camera1, camera0, T_1to0_pred)
+        data['photo_loss']['kpts0'] = kpts0
+        data['photo_loss']['kpts1'] = kpts1
+        data['photo_loss']['kpts0_1'] = kpts0_1
+        data['photo_loss']['kpts1_0'] = kpts1_0
+        # Extract patches from valid kpts
         patches0 = get_patches(data['view0']['image'], kpts0, self.config.photo_vo.model.patch_size)
         patches1 = get_patches(data['view1']['image'], kpts1, self.config.photo_vo.model.patch_size)
         patches0 = torch.nan_to_num(patches0, nan=-1.0)
         patches1 = torch.nan_to_num(patches1, nan=-1.0)
-
+        
+        data['photo_loss']['patches0'] = patches0
+        data['photo_loss']['patches1'] = patches1
+        
+        # Extract patches from projected kpts
         patches0_1 = get_patches(data['view1']['image'], kpts0_1, self.config.photo_vo.model.patch_size)
         patches1_0 = get_patches(data['view0']['image'], kpts1_0, self.config.photo_vo.model.patch_size)
+
+        data['photo_loss']['patches0_1'] = patches0_1
+        data['photo_loss']['patches1_0'] = patches1_0
+
         patches0_1 = torch.nan_to_num(patches0_1, nan=-1.0)
         patches1_0 = torch.nan_to_num(patches1_0, nan=-1.0)
 
@@ -204,7 +217,8 @@ class PhotoVoModel(nn.Module):
         w2 = self.config.photo_vo.model.loss_weights.pose
         w3 = self.config.photo_vo.model.loss_weights.match
         loss = {'photometric_loss': pl, 'pose_error': pe, 'match_loss': ml, 'total': w1*pl + w2*pe + w3*ml}
-        return loss
+
+        return loss, data
         
     
 def get_photo_vo_model(config):

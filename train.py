@@ -38,7 +38,7 @@ def train(model, train_loader, val_loader, optimizer, device, config, debug=Fals
         optimizer.zero_grad()
         data = batch_to_device(data, device, non_blocking=True)
         output = model(data)
-        loss = model.loss(output)
+        loss, output = model.loss(output)
         if torch.isnan(loss['total']).any():
             print(f"Detected NAN, skipping iteration {it}")
             del output
@@ -56,8 +56,9 @@ def train(model, train_loader, val_loader, optimizer, device, config, debug=Fals
             writer.add_scalar("train/loss/photometric", loss['photometric_loss'].item(), it)
             writer.add_scalar("train/loss/pose", loss['pose_error'].item(), it)
             writer.add_scalar("train/loss/match", loss['match_loss'].item(), it)
-            fig_matches, fig_patches = debug_batch(output, n_pairs=1)
+            fig_matches, fig_projs, fig_patches = debug_batch(output, n_pairs=1)
             writer.add_figure("train/fig/matches", fig_matches, it)
+            writer.add_figure("train/fig/projs", fig_projs, it)
             writer.add_figure("train/fig/patches", fig_patches, it)
 
         #validation
@@ -69,7 +70,7 @@ def train(model, train_loader, val_loader, optimizer, device, config, debug=Fals
                 data = batch_to_device(data, device, non_blocking=True)
                 with torch.no_grad():
                     output = model(data)
-                    loss = model.loss(output)
+                    loss, output = model.loss(output)
                     avg_losses = {k: v + loss[k].item() for k, v in avg_losses.items()}
                     if torch.isnan(loss['total']).any():
                         print(f"Detected NAN, skipping iteration {it}")
@@ -83,9 +84,10 @@ def train(model, train_loader, val_loader, optimizer, device, config, debug=Fals
             writer.add_scalar("val/loss/photometric", avg_losses['photometric_loss'], it)
             writer.add_scalar("val/loss/pose", avg_losses['pose_error'], it)
             writer.add_scalar("val/loss/match", avg_losses['match_loss'], it)
-            fig_matches, fig_patches = debug_batch(output, n_pairs=3)
+            fig_matches, fig_projs, fig_patches = debug_batch(output, n_pairs=3)
             writer.add_figure("val/fig/matches", fig_matches, it)
-            writer.add_figure("val/fig/patches", fig_patches, it)     
+            writer.add_figure("val/fig/projs", fig_projs, it)
+            writer.add_figure("val/fig/patches", fig_patches, it)
         
             if(avg_losses['total'] < config.train.best_loss):
                     best_loss = avg_losses['total']

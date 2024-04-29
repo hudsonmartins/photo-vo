@@ -45,7 +45,7 @@ def debug_batch(data, n_pairs=2):
         data = data["0to1"]
     
     data = batch_to_device(data, "cpu", non_blocking=False)
-    images, kpts, matches, mcolors, images_patches = [], [], [], [], []
+    images, kpts, matches, mcolors, images_projs, patches0, patches1 = [], [], [], [], [], [], []
     heatmaps = []
     view0, view1 = data["view0"], data["view1"]
     pred = data["pred_vo"]
@@ -67,11 +67,9 @@ def debug_batch(data, n_pairs=2):
     camera0, camera1 = view0["camera"], view1["camera"]
 
     m0 = data["matches0"]
-    kpts0_pl, kpts0_1_gt = get_kpts_projection(view0['patches_coords'], depth0, depth1, camera0, camera1, data["T_0to1"])
-    kpts1_pl, kpts1_0_gt = get_kpts_projection(view1['patches_coords'], depth1, depth0, camera1, camera0, data["T_1to0"])
+    kpts0_gt, kpts0_1_gt = get_kpts_projection(view0['patches_coords'], depth0, depth1, camera0, camera1, data["T_0to1"])
+    kpts1_gt, kpts1_0_gt = get_kpts_projection(view1['patches_coords'], depth1, depth0, camera1, camera0, data["T_1to0"])
     
-    _, kpts0_1_pred = get_kpts_projection(view0['patches_coords'], depth0, depth1, camera0, camera1, T_0to1_pred)
-    _, kpts1_0_pred = get_kpts_projection(view1['patches_coords'], depth1, depth0, camera1, camera0, T_1to0_pred)
     
     for i in range(n_pairs):
         valid = (m0[i] > -1)
@@ -96,11 +94,11 @@ def debug_batch(data, n_pairs=2):
 
         mcolors.append(cm_RdGn(correct).tolist())
 
-        img_patches0 = draw_patches(view0["image"][i].permute(1, 2, 0)*255, kpts0_pl[i], color=(0,255,0))
-        img_patches1 = draw_patches(view1["image"][i].permute(1, 2, 0)*255, kpts1_pl[i], color=(0,255,0))
+        img_patches0 = draw_patches(view0["image"][i].permute(1, 2, 0)*255, kpts0_gt[i], color=(0,255,0))
+        img_patches1 = draw_patches(view1["image"][i].permute(1, 2, 0)*255, kpts1_gt[i], color=(0,255,0))
 
-        img_patches0 = draw_patches(img_patches0, kpts1_0_pred[i].detach().numpy(), color=(255,0,0))
-        img_patches1 = draw_patches(img_patches1, kpts0_1_pred[i].detach().numpy(), color=(255,0,0))
+        img_patches0 = draw_patches(img_patches0, data['photo_loss']['kpts1_0'][i].detach().numpy(), color=(255,0,0))
+        img_patches1 = draw_patches(img_patches1, data['photo_loss']['kpts0_1'][i].detach().numpy(), color=(255,0,0))
 
         img_patches0 = draw_patches(img_patches0, kpts1_0_gt[i].detach().numpy(), color=(0,0,255))
         img_patches1 = draw_patches(img_patches1, kpts0_1_gt[i].detach().numpy(), color=(0,0,255))
@@ -110,7 +108,8 @@ def debug_batch(data, n_pairs=2):
             img_patches0 = cv2.putText(img_patches0, 'Blue: Ground Truth Projection', (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1, cv2.LINE_AA)
         except:
             pass
-        images_patches.append([img_patches0, img_patches1])
+        images_projs.append([img_patches0, img_patches1])
+        
 
     fig_matches, axes = plot_image_grid(images, return_fig=True, set_lim=True)
     if len(heatmaps) > 0:
@@ -121,8 +120,16 @@ def debug_batch(data, n_pairs=2):
         for i in range(n_pairs)
     ]
 
-    fig_patches, axes = plot_image_grid(images_patches, return_fig=True, set_lim=True)   
-    return fig_matches, fig_patches
+    fig_projs, axes = plot_image_grid(images_projs, return_fig=True, set_lim=True)   
+
+    patches0 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches0'][i]]
+    patches1_0 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches1_0'][i]]
+    patches1 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches1'][i]]
+    patches0_1 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches0_1'][i]]
+    
+    fig_patches, axes = plot_image_grid([patches0[:10], patches1_0[:10], patches1[:10], patches0_1[:10]], return_fig=True, set_lim=True)
+
+    return fig_matches, fig_projs, fig_patches
 
 
 def get_kpts_projection(kpts, depth0, depth1, camera0, camera1, T_0to1):
