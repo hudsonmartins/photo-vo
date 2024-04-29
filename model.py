@@ -177,11 +177,12 @@ class PhotoVoModel(nn.Module):
         t_pred = pred[..., :3]
         T_0to1_pred = Pose.from_Rt(R_pred, t_pred)
         T_1to0_pred = T_0to1_pred.inv()
-        _, kpts0_1 = get_kpts_projection(kpts0, depth0, depth1, camera0, camera1, T_0to1_pred)
-        _, kpts1_0 = get_kpts_projection(kpts1, depth1, depth0, camera1, camera0, T_1to0_pred)
-        
-        patches0 = data['view0']['patches']
-        patches1 = data['view1']['patches']
+        kpts0, kpts0_1 = get_kpts_projection(kpts0, depth0, depth1, camera0, camera1, T_0to1_pred)
+        kpts1, kpts1_0 = get_kpts_projection(kpts1, depth1, depth0, camera1, camera0, T_1to0_pred)
+        patches0 = get_patches(data['view0']['image'], kpts0, self.config.photo_vo.model.patch_size)
+        patches1 = get_patches(data['view1']['image'], kpts1, self.config.photo_vo.model.patch_size)
+        patches0 = torch.nan_to_num(patches0, nan=-1.0)
+        patches1 = torch.nan_to_num(patches1, nan=-1.0)
 
         patches0_1 = get_patches(data['view1']['image'], kpts0_1, self.config.photo_vo.model.patch_size)
         patches1_0 = get_patches(data['view0']['image'], kpts1_0, self.config.photo_vo.model.patch_size)
