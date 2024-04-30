@@ -33,7 +33,15 @@ def patches_photometric_loss(patches0, patches1):
     batch_size = patches0.size(0)
     loss = 0
     for i in range(batch_size):
-        loss += photometric_loss(patches0[i], patches1[i])
+        valid = torch.ones(patches0[i].shape[0])
+        for j in range(patches0[i].shape[0]):
+            #check if any pixel is negative
+            if torch.any(patches0[i][j] < 0) or torch.any(patches1[i][j] < 0):
+                valid[j] = 0
+        mask = valid > 0                
+        p0 = patches0[i][mask]
+        p1 = patches1[i][mask]
+        loss += photometric_loss(p0, p1)
     return loss/batch_size
 
 

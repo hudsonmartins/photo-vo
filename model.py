@@ -198,10 +198,9 @@ class PhotoVoModel(nn.Module):
 
         data['photo_loss']['patches0_1'] = patches0_1
         data['photo_loss']['patches1_0'] = patches1_0
-
         patches0_1 = torch.nan_to_num(patches0_1, nan=-1.0)
         patches1_0 = torch.nan_to_num(patches1_0, nan=-1.0)
-
+        
         pl0 = patches_photometric_loss(patches0, patches1_0)
         pl1 = patches_photometric_loss(patches1, patches0_1)
         pl = (pl0 + pl1)/2
