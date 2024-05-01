@@ -41,7 +41,6 @@ def train(model, train_loader, val_loader, optimizer, device, config, debug=Fals
         loss, output = model.loss(output)
         if torch.isnan(loss['total']).any():
             print(f"Detected NAN, skipping iteration {it}")
-            del output
             continue
         loss['total'].backward()
         optimizer.step()
@@ -65,40 +64,40 @@ def train(model, train_loader, val_loader, optimizer, device, config, debug=Fals
         if(it % config.train.eval_every_iter == 0 or it == (len(train_loader) - 1)):
             model.eval()
             avg_losses = {k: 0 for k in loss.keys()}
-
+            output = None
             for it, data in enumerate(val_loader):
                 data = batch_to_device(data, device, non_blocking=True)
                 with torch.no_grad():
                     output = model(data)
                     loss, output = model.loss(output)
-                    avg_losses = {k: v + loss[k].item() for k, v in avg_losses.items()}
                     if torch.isnan(loss['total']).any():
                         print(f"Detected NAN, skipping iteration {it}")
-                        del output
                         continue
+                    avg_losses = {k: v + loss[k].item() for k, v in avg_losses.items()}
+
             avg_losses = {k: v / len(val_loader) for k, v in avg_losses.items()}
             
-
-            logger.info(f"[Val] Loss: {avg_losses['total']}")
-            writer.add_scalar("val/loss/total", avg_losses['total'], it)
-            writer.add_scalar("val/loss/photometric", avg_losses['photometric_loss'], it)
-            writer.add_scalar("val/loss/pose", avg_losses['pose_error'], it)
-            writer.add_scalar("val/loss/match", avg_losses['match_loss'], it)
-            fig_matches, fig_projs, fig_patches = debug_batch(output, n_pairs=3)
-            writer.add_figure("val/fig/matches", fig_matches, it)
-            writer.add_figure("val/fig/projs", fig_projs, it)
-            writer.add_figure("val/fig/patches", fig_patches, it)
-        
-            if(avg_losses['total'] < config.train.best_loss):
-                    best_loss = avg_losses['total']
-                    config.train.best_loss = best_loss
-                    logger.info(f"Found best model with loss {best_loss}. Saving checkpoint.")
-                    torch.save({
-                        "model": model.state_dict(),
-                        "optimizer": optimizer.state_dict(),
-                        "conf": OmegaConf.to_container(config, resolve=True),
-                        "epoch": it,
-                    }, os.path.join(args.experiment, "best_model.tar"))
+            if(output is not None):
+                logger.info(f"[Val] Loss: {avg_losses['total']}")
+                writer.add_scalar("val/loss/total", avg_losses['total'], it)
+                writer.add_scalar("val/loss/photometric", avg_losses['photometric_loss'], it)
+                writer.add_scalar("val/loss/pose", avg_losses['pose_error'], it)
+                writer.add_scalar("val/loss/match", avg_losses['match_loss'], it)
+                fig_matches, fig_projs, fig_patches = debug_batch(output, n_pairs=3)
+                writer.add_figure("val/fig/matches", fig_matches, it)
+                writer.add_figure("val/fig/projs", fig_projs, it)
+                writer.add_figure("val/fig/patches", fig_patches, it)
+            
+                if(avg_losses['total'] < config.train.best_loss):
+                        best_loss = avg_losses['total']
+                        config.train.best_loss = best_loss
+                        logger.info(f"Found best model with loss {best_loss}. Saving checkpoint.")
+                        torch.save({
+                            "model": model.state_dict(),
+                            "optimizer": optimizer.state_dict(),
+                            "conf": OmegaConf.to_container(config, resolve=True),
+                            "epoch": it,
+                        }, os.path.join(args.experiment, "best_model.tar"))
 
         if(it % config.train.save_every_iter == 0 or it == (len(train_loader) - 1)):
             logger.info(f"Saving checkpoint at iteration {it}")
