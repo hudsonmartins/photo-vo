@@ -30,6 +30,7 @@ def photometric_loss(img0, img1):
 
 
 def patches_photometric_loss(patches0, patches1):
+    """Compute the photometric loss between two sets of patches."""
     batch_size = patches0.size(0)
     loss = 0
     for i in range(batch_size):
@@ -38,7 +39,7 @@ def patches_photometric_loss(patches0, patches1):
             #check if any pixel is negative
             if torch.any(patches0[i][j] < 0) or torch.any(patches1[i][j] < 0):
                 valid[j] = 0
-        mask = valid > 0                
+        mask = valid > 0
         p0 = patches0[i][mask]
         p1 = patches1[i][mask]
         loss += photometric_loss(p0, p1)
