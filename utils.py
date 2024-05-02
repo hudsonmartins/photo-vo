@@ -7,6 +7,7 @@ from gluefactory.utils.tensor import batch_to_device
 from gluefactory.visualization.viz2d import plot_heatmaps, plot_image_grid, plot_keypoints, plot_matches, cm_RdGn
 from gluefactory.geometry.wrappers import Pose
 
+
 def normalize_image(image):
     """
     Normalize using imagenet mean and std
@@ -34,7 +35,7 @@ def get_sorted_matches(data):
         sorted_mcfs = mcfs[sorted_indices]
         b_mcfs[i] = sorted_mcfs
     return b_mcfs
-    
+        
 
 def debug_batch(data, n_pairs=2):
     '''
@@ -94,14 +95,14 @@ def debug_batch(data, n_pairs=2):
 
         mcolors.append(cm_RdGn(correct).tolist())
 
-        img_patches0 = draw_patches(view0["image"][i].permute(1, 2, 0)*255, kpts0_gt[i], color=(0,255,0))
-        img_patches1 = draw_patches(view1["image"][i].permute(1, 2, 0)*255, kpts1_gt[i], color=(0,255,0))
-
-        img_patches0 = draw_patches(img_patches0, data['photo_loss']['kpts1_0'][i].detach().numpy(), color=(255,0,0))
-        img_patches1 = draw_patches(img_patches1, data['photo_loss']['kpts0_1'][i].detach().numpy(), color=(255,0,0))
+        img_patches0 = draw_patches(view0["image"][i].permute(1, 2, 0)*255, kpts0_gt[i], color=(0,255,0), patch_size=16)
+        img_patches1 = draw_patches(view1["image"][i].permute(1, 2, 0)*255, kpts1_gt[i], color=(0,255,0), patch_size=16)
+        
+        img_patches0 = draw_patches(img_patches0, data['photo_loss']['kpts1_0'][i].detach().numpy(), color=(255,0,0), patch_size=16)
+        img_patches1 = draw_patches(img_patches1, data['photo_loss']['kpts0_1'][i].detach().numpy(), color=(255,0,0), patch_size=16)
 
         img_patches0 = draw_patches(img_patches0, kpts1_0_gt[i].detach().numpy(), color=(0,0,255))
-        img_patches1 = draw_patches(img_patches1, kpts0_1_gt[i].detach().numpy(), color=(0,0,255))
+        img_patches1 = draw_patches(img_patches1, kpts0_1_gt[i].detach().numpy(), color=(0,0,255), patch_size=16)
         try:
             img_patches0 = cv2.putText(img_patches0, 'Green: Exctracted', (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1, cv2.LINE_AA)
             img_patches0 = cv2.putText(img_patches0, 'Red: Predicted Projection', (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0), 1, cv2.LINE_AA)
@@ -111,7 +112,7 @@ def debug_batch(data, n_pairs=2):
         images_projs.append([img_patches0, img_patches1])
         
 
-    fig_matches, axes = plot_image_grid(images, return_fig=True, set_lim=True)
+    fig_matches, axes = plot_image_grid(images, return_fig=True, set_lim=True, dpi=700)
     if len(heatmaps) > 0:
        [plot_heatmaps(heatmaps[i], axes=axes[i], a=1.0) for i in range(n_pairs)]
     [plot_keypoints(kpts[i], axes=axes[i], colors="royalblue") for i in range(n_pairs)]
@@ -120,14 +121,16 @@ def debug_batch(data, n_pairs=2):
         for i in range(n_pairs)
     ]
 
-    fig_projs, axes = plot_image_grid(images_projs, return_fig=True, set_lim=True)   
+    fig_projs, axes = plot_image_grid(images_projs, return_fig=True, set_lim=True, dpi=700)   
 
-    patches0 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches0'][i]]
-    patches1_0 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches1_0'][i]]
-    patches1 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches1'][i]]
-    patches0_1 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches0_1'][i]]
-    
-    fig_patches, axes = plot_image_grid([patches0[:10], patches1_0[:10], patches1[:10], patches0_1[:10]], return_fig=True, set_lim=True)
+    patches0 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches0'][i] if not torch.any(p < 0)]
+    patches1_0 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches1_0'][i] if not torch.any(p < 0)]
+    patches1 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches1'][i] if not torch.any(p < 0)]
+    patches0_1 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches0_1'][i] if not torch.any(p < 0)]
+    if(len(patches0) > 0 and len(patches1_0) > 0 and len(patches1) > 0 and len(patches0_1) > 0):
+        fig_patches, axes = plot_image_grid([patches0[:10], patches1_0[:10], patches1[:10], patches0_1[:10]], return_fig=True, set_lim=True)
+    else:
+        fig_patches = None
 
     return fig_matches, fig_projs, fig_patches
 

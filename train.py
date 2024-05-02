@@ -12,7 +12,7 @@ from gluefactory.utils.tensor import batch_to_device
 
 from torch.utils.tensorboard import SummaryWriter
 
-from utils import debug_batch, get_sorted_matches
+from utils import debug_batch
 from model import get_photo_vo_model
 
 default_train_conf = {
@@ -70,10 +70,25 @@ def train(model, train_loader, val_loader, optimizer, device, config, debug=Fals
                 with torch.no_grad():
                     output = model(data)
                     loss, output = model.loss(output)
+                    # if(it == len(val_loader)-1):
+                    #     writer.add_scalar("val/pred/x", output['pred_vo'][0][0])
+                    #     writer.add_scalar("val/pred/y", output['pred_vo'][0][1])
+                    #     writer.add_scalar("val/pred/z", output['pred_vo'][0][2])
+                    #     writer.add_scalar("val/pred/yaw", output['pred_vo'][0][3])
+                    #     writer.add_scalar("val/pred/pitch", output['pred_vo'][0][4])
+                    #     writer.add_scalar("val/pred/roll", output['pred_vo'][0][5])
+                    #     writer.add_scalar("val/gt/x", output['gt_vo'][0][0])
+                    #     writer.add_scalar("val/gt/y", output['gt_vo'][0][1])
+                    #     writer.add_scalar("val/gt/z", output['gt_vo'][0][2])
+                    #     writer.add_scalar("val/gt/yaw", output['gt_vo'][0][3])
+                    #     writer.add_scalar("val/gt/pitch", output['gt_vo'][0][4])
+                    #     writer.add_scalar("val/gt/roll", output['gt_vo'][0][5])
+                        
                     if torch.isnan(loss['total']).any():
                         print(f"Detected NAN, skipping iteration {it}")
                         continue
                     avg_losses = {k: v + loss[k].item() for k, v in avg_losses.items()}
+                    
 
             avg_losses = {k: v / len(val_loader) for k, v in avg_losses.items()}
             
@@ -83,10 +98,13 @@ def train(model, train_loader, val_loader, optimizer, device, config, debug=Fals
                 writer.add_scalar("val/loss/photometric", avg_losses['photometric_loss'], it)
                 writer.add_scalar("val/loss/pose", avg_losses['pose_error'], it)
                 writer.add_scalar("val/loss/match", avg_losses['match_loss'], it)
-                fig_matches, fig_projs, fig_patches = debug_batch(output, n_pairs=3)
-                writer.add_figure("val/fig/matches", fig_matches, it)
-                writer.add_figure("val/fig/projs", fig_projs, it)
-                writer.add_figure("val/fig/patches", fig_patches, it)
+                fig_matches, fig_projs, fig_patches = debug_batch(output, n_pairs=1)
+                if(fig_matches is not None):
+                    writer.add_figure("val/fig/matches", fig_matches, it)
+                if(fig_projs is not None):
+                    writer.add_figure("val/fig/projs", fig_projs, it)
+                if(fig_patches is not None):
+                    writer.add_figure("val/fig/patches", fig_patches, it)
             
                 if(avg_losses['total'] < config.train.best_loss):
                         best_loss = avg_losses['total']

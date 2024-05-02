@@ -1,5 +1,4 @@
 import torch
-from utils import matrix_to_euler_angles
 
 def get_ssim(img0, img1):
     #Extracted from https://github.com/mrharicot/monodepth/blob/master/monodepth_model.py#L91

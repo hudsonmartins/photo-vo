@@ -111,7 +111,6 @@ class PhotoVoModel(nn.Module):
     def forward(self, data):
         # Encode images
         image_embs = self.imgenc(data)
-
         # Extract and match features
         self.features = self.matcher(data)
 
@@ -159,7 +158,6 @@ class PhotoVoModel(nn.Module):
         scores1 = torch.cat([scores1_valid, torch.full((scores1_valid.size(0), kpts1.size(1)-scores1_valid.size(1)), -1.0, dtype=scores1_valid.dtype, device=scores1_valid.device)], dim=1)
         scores = torch.cat([scores0, scores1], dim=1)
         patch_embs = torch.cat([patch_embs, scores.unsqueeze(-1)], dim=-1)
-        
         output = self.motion_estimator(image_embs, patch_embs)
         data['pred_vo'] = output
         return {**data, **self.features}
@@ -209,6 +207,7 @@ class PhotoVoModel(nn.Module):
         gt_t = data['T_0to1'].t
         gt = torch.cat((gt_t, matrix_to_euler_angles(gt_R, "XYZ")), dim=1)
         pe = pose_error(gt, pred)
+        data['gt_vo'] = gt
 
         match_losses, _ = self.matcher.loss(self.features, data)
         ml = match_losses['total']
