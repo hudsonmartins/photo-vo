@@ -30,107 +30,96 @@ default_train_conf = {
 }
 default_train_conf = OmegaConf.create(default_train_conf)
 
+
+def do_evaluation(val_loader, model, device):
+    avg_losses = {}
+    for it, data in enumerate(val_loader):
+        data = batch_to_device(data, device, non_blocking=True)
+        with torch.no_grad():
+            output = model(data)
+            loss, output = model.loss(output)
+            if torch.isnan(loss['total']).any():
+                print(f"Detected NAN, skipping iteration {it}")
+                continue
+            avg_losses = {k: v + loss[k].item() for k, v in loss.items()}
+    avg_losses = {k: v / len(val_loader) for k, v in avg_losses.items()}
+    fig_matches, fig_projs, fig_patches = debug_batch(output, n_pairs=1)
+    return avg_losses, fig_matches, fig_projs, fig_patches
+
+
 def train(model, train_loader, val_loader, optimizer, device, config, debug=False):
     writer = SummaryWriter(log_dir=config.train.tensorboard_dir)
+    epoch = 0
+    while(epoch < config.train.epochs):
+        for it, data in enumerate(train_loader):
+            logger.info(f"Starting Iteration {it} in epoch {epoch}")
+            tot_n_samples = (len(train_loader) * epoch + it)
+            model.train()
+            optimizer.zero_grad()
+            data = batch_to_device(data, device, non_blocking=True)
+            output = model(data)
+            loss, output = model.loss(output)
+            if torch.isnan(loss['total']).any():
+                print(f"Detected NAN, skipping iteration {it}")
+                continue
+            loss['total'].backward()
+            optimizer.step()
 
-    for it, data in enumerate(train_loader):
-        model.train()
-        optimizer.zero_grad()
-        data = batch_to_device(data, device, non_blocking=True)
-        output = model(data)
-        loss, output = model.loss(output)
-        if torch.isnan(loss['total']).any():
-            print(f"Detected NAN, skipping iteration {it}")
-            continue
-        loss['total'].backward()
-        optimizer.step()
+            if(debug):
+                debug_batch(output, n_pairs=1)
+                plt.show()
 
-        if(debug):
-           debug_batch(output, n_pairs=1)
-           plt.show()
-
-        if(it % config.train.log_every_iter == 0):
-            logger.info(f"[Train] Iteration {it} Loss: {loss['total'].item()}")
-            writer.add_scalar("train/loss/total", loss['total'].item(), it)
-            writer.add_scalar("train/loss/photometric", loss['photometric_loss'].item(), it)
-            writer.add_scalar("train/loss/pose", loss['pose_error'].item(), it)
-            writer.add_scalar("train/loss/match", loss['match_loss'].item(), it)
-            fig_matches, fig_projs, fig_patches = debug_batch(output, n_pairs=1)
-            writer.add_figure("train/fig/matches", fig_matches, it)
-            writer.add_figure("train/fig/projs", fig_projs, it)
-            writer.add_figure("train/fig/patches", fig_patches, it)
-
-        #validation
-        if(it % config.train.eval_every_iter == 0 or it == (len(train_loader) - 1)):
-            model.eval()
-            avg_losses = {k: 0 for k in loss.keys()}
-            output = None
-            for it, data in enumerate(val_loader):
-                data = batch_to_device(data, device, non_blocking=True)
-                with torch.no_grad():
-                    output = model(data)
-                    loss, output = model.loss(output)
-                    # if(it == len(val_loader)-1):
-                    #     writer.add_scalar("val/pred/x", output['pred_vo'][0][0])
-                    #     writer.add_scalar("val/pred/y", output['pred_vo'][0][1])
-                    #     writer.add_scalar("val/pred/z", output['pred_vo'][0][2])
-                    #     writer.add_scalar("val/pred/yaw", output['pred_vo'][0][3])
-                    #     writer.add_scalar("val/pred/pitch", output['pred_vo'][0][4])
-                    #     writer.add_scalar("val/pred/roll", output['pred_vo'][0][5])
-                    #     writer.add_scalar("val/gt/x", output['gt_vo'][0][0])
-                    #     writer.add_scalar("val/gt/y", output['gt_vo'][0][1])
-                    #     writer.add_scalar("val/gt/z", output['gt_vo'][0][2])
-                    #     writer.add_scalar("val/gt/yaw", output['gt_vo'][0][3])
-                    #     writer.add_scalar("val/gt/pitch", output['gt_vo'][0][4])
-                    #     writer.add_scalar("val/gt/roll", output['gt_vo'][0][5])
-                        
-                    if torch.isnan(loss['total']).any():
-                        print(f"Detected NAN, skipping iteration {it}")
-                        continue
-                    avg_losses = {k: v + loss[k].item() for k, v in avg_losses.items()}
-                    
-
-            avg_losses = {k: v / len(val_loader) for k, v in avg_losses.items()}
-            
-            if(output is not None):
-                logger.info(f"[Val] Loss: {avg_losses['total']}")
-                writer.add_scalar("val/loss/total", avg_losses['total'], it)
-                writer.add_scalar("val/loss/photometric", avg_losses['photometric_loss'], it)
-                writer.add_scalar("val/loss/pose", avg_losses['pose_error'], it)
-                writer.add_scalar("val/loss/match", avg_losses['match_loss'], it)
+            if(it % config.train.log_every_iter == 0):
+                logger.info(f"[Train] Epoch {epoch} Iteration {it} Loss: {loss['total'].item()}")
+                for k, v in loss.items():
+                    writer.add_scalar("train/loss/" + k, v, tot_n_samples)
                 fig_matches, fig_projs, fig_patches = debug_batch(output, n_pairs=1)
+                writer.add_figure("train/fig/matches", fig_matches, tot_n_samples)
+                writer.add_figure("train/fig/projs", fig_projs, tot_n_samples)
+                writer.add_figure("train/fig/patches", fig_patches, tot_n_samples)
+                writer.add_scalar("train/epoch", epoch, tot_n_samples)
+
+            #validation
+            if(config.train.eval_every_iter > 0 and it % config.train.eval_every_iter == 0 or it == (len(train_loader) - 1)):                
+                logger.info(f"[Val] Epoch: {epoch} Iteration: {it} Loss: {loss['total'].item()}")
+                model.eval()
+                loss, fig_matches, fig_projs, fig_patches = do_evaluation(val_loader, model, device)
+
+                for k, v in loss.items():
+                    writer.add_scalar("val/loss/" + k, v, tot_n_samples)                    
                 if(fig_matches is not None):
-                    writer.add_figure("val/fig/matches", fig_matches, it)
+                    writer.add_figure("val/fig/matches", fig_matches, tot_n_samples)
                 if(fig_projs is not None):
-                    writer.add_figure("val/fig/projs", fig_projs, it)
+                    writer.add_figure("val/fig/projs", fig_projs, tot_n_samples)
                 if(fig_patches is not None):
-                    writer.add_figure("val/fig/patches", fig_patches, it)
-            
-                if(avg_losses['total'] < config.train.best_loss):
-                        best_loss = avg_losses['total']
-                        config.train.best_loss = best_loss
-                        logger.info(f"Found best model with loss {best_loss}. Saving checkpoint.")
-                        torch.save({
-                            "model": model.state_dict(),
-                            "optimizer": optimizer.state_dict(),
-                            "conf": OmegaConf.to_container(config, resolve=True),
-                            "epoch": it,
-                        }, os.path.join(args.experiment, "best_model.tar"))
+                    writer.add_figure("val/fig/patches", fig_patches, tot_n_samples)
+                writer.add_scalar("val/epoch", epoch, tot_n_samples)
 
-        if(it % config.train.save_every_iter == 0 or it == (len(train_loader) - 1)):
-            logger.info(f"Saving checkpoint at iteration {it}")
-            torch.save({
-                "model": model.state_dict(),
-                "optimizer": optimizer.state_dict(),
-                "conf": OmegaConf.to_container(config, resolve=True),
-                "epoch": it,
-            }, os.path.join(args.experiment, f"checkpoint_{it}.tar"))
+                if(loss['total'].item() < config.train.best_loss):
+                    best_loss = loss['total'].item()
+                    config.train.best_loss = best_loss
+                    logger.info(f"Found best model with loss {best_loss}. Saving checkpoint.")
+                    torch.save({
+                        "model": model.state_dict(),
+                        "optimizer": optimizer.state_dict(),
+                        "conf": OmegaConf.to_container(config, resolve=True),
+                        "epoch": it,
+                    }, os.path.join(args.experiment, "best_model.tar"))
 
+            if(config.train.save_every_iter > 0 and it % config.train.save_every_iter == 0 or it == (len(train_loader) - 1)):
+                logger.info(f"Saving checkpoint at epoch {epoch} iteration {it}")
+                torch.save({
+                    "model": model.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                    "conf": OmegaConf.to_container(config, resolve=True),
+                    "epoch": it,
+                }, os.path.join(args.experiment, f"checkpoint_{epoch}_{it}.tar"))
+        epoch += 1
 
 def main(args):
     logger.info('Training with the following configuration: ')
     conf = OmegaConf.load(args.conf)
-    logger.info(conf.data)
+    logger.info(conf)    
     assert conf.features_model.name == 'two_view_pipeline'
     device = "cuda" if torch.cuda.is_available() and args.use_cuda else "cpu"
     logger.info(f"Using device {device}")
