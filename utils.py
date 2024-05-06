@@ -37,7 +37,7 @@ def get_sorted_matches(data):
     return b_mcfs
         
 
-def debug_batch(data, n_pairs=2):
+def debug_batch(data, n_pairs=2, figs_dpi=100):
     '''
     Visualize the first n_pairs in the batch
     Copied from gluefactory.visualization.visualize_batch.py
@@ -112,7 +112,7 @@ def debug_batch(data, n_pairs=2):
         images_projs.append([img_patches0, img_patches1])
         
 
-    fig_matches, axes = plot_image_grid(images, return_fig=True, set_lim=True, dpi=700)
+    fig_matches, axes = plot_image_grid(images, return_fig=True, set_lim=True, dpi=figs_dpi)
     if len(heatmaps) > 0:
        [plot_heatmaps(heatmaps[i], axes=axes[i], a=1.0) for i in range(n_pairs)]
     [plot_keypoints(kpts[i], axes=axes[i], colors="royalblue") for i in range(n_pairs)]
@@ -121,7 +121,7 @@ def debug_batch(data, n_pairs=2):
         for i in range(n_pairs)
     ]
 
-    fig_projs, axes = plot_image_grid(images_projs, return_fig=True, set_lim=True, dpi=700)   
+    fig_projs, axes = plot_image_grid(images_projs, return_fig=True, set_lim=True, dpi=figs_dpi)   
 
     patches0 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches0'][i] if not torch.any(p < 0)]
     patches1_0 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches1_0'][i] if not torch.any(p < 0)]

@@ -16,7 +16,6 @@ from utils import debug_batch
 from model import get_photo_vo_model
 
 default_train_conf = {
-    "seed": 42,  # random seed
     "epochs": 1,  # number of epochs
     "optimizer": "adam",  # name of optimizer in [adam, sgd, rmsprop]
     "optimizer_options": {},  # optional arguments passed to the optimizer
@@ -43,7 +42,7 @@ def do_evaluation(val_loader, model, device):
                 continue
             avg_losses = {k: v + loss[k].item() for k, v in loss.items()}
     avg_losses = {k: v / len(val_loader) for k, v in avg_losses.items()}
-    fig_matches, fig_projs, fig_patches = debug_batch(output, n_pairs=1)
+    fig_matches, fig_projs, fig_patches = debug_batch(output, n_pairs=1, figs_dpi=700)
     return avg_losses, fig_matches, fig_projs, fig_patches
 
 
@@ -66,14 +65,14 @@ def train(model, train_loader, val_loader, optimizer, device, config, debug=Fals
             optimizer.step()
 
             if(debug):
-                debug_batch(output, n_pairs=1)
+                debug_batch(output, n_pairs=1, figs_dpi=100)
                 plt.show()
 
             if(it % config.train.log_every_iter == 0):
                 logger.info(f"[Train] Epoch {epoch} Iteration {it} Loss: {loss['total'].item()}")
                 for k, v in loss.items():
                     writer.add_scalar("train/loss/" + k, v, tot_n_samples)
-                fig_matches, fig_projs, fig_patches = debug_batch(output, n_pairs=1)
+                fig_matches, fig_projs, fig_patches = debug_batch(output, n_pairs=1, figs_dpi=700)
                 writer.add_figure("train/fig/matches", fig_matches, tot_n_samples)
                 writer.add_figure("train/fig/projs", fig_projs, tot_n_samples)
                 writer.add_figure("train/fig/patches", fig_patches, tot_n_samples)
@@ -171,12 +170,12 @@ def main(args):
         "rmsprop": torch.optim.RMSprop,
     }[conf.train.optimizer]
 
-    random.seed(conf.train.seed)
-    torch.manual_seed(conf.train.seed)
-    np.random.seed(conf.train.seed)
+    random.seed(conf.data.seed)
+    torch.manual_seed(conf.data.seed)
+    np.random.seed(conf.data.seed)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed(conf.train.seed)
-        torch.cuda.manual_seed_all(conf.train.seed)
+        torch.cuda.manual_seed(conf.data.seed)
+        torch.cuda.manual_seed_all(conf.data.seed)
 
     dataset = get_dataset(conf.data.name)(conf.data)
     train_loader = dataset.get_data_loader("train")
