@@ -4,9 +4,9 @@ import glob
 import argparse
 import numpy as np
 import random
+import logging
 import matplotlib.pyplot as plt
 from omegaconf import OmegaConf
-from gluefactory import logger
 from gluefactory.datasets import get_dataset
 from gluefactory.utils.tensor import batch_to_device
 
@@ -15,7 +15,16 @@ from torch.utils.tensorboard import SummaryWriter
 from utils import debug_batch
 from model import get_photo_vo_model
 
+logger = logging.getLogger("photo-vo.train")
+logger.setLevel(logging.INFO)
+handler = logging.StreamHandler()
+formatter = logging.Formatter(fmt="[%(asctime)s %(name)s %(levelname)s] %(message)s", datefmt="%m/%d/%Y %H:%M:%S")
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+logger.propagate = False
+
 default_train_conf = {
+    "epoch": 0,  # current epoch
     "epochs": 1,  # number of epochs
     "optimizer": "adam",  # name of optimizer in [adam, sgd, rmsprop]
     "optimizer_options": {},  # optional arguments passed to the optimizer
@@ -48,7 +57,7 @@ def do_evaluation(val_loader, model, device):
 
 def train(model, train_loader, val_loader, optimizer, device, config, debug=False):
     writer = SummaryWriter(log_dir=config.train.tensorboard_dir)
-    epoch = 0
+    epoch = config.train.epoch
     while(epoch < config.train.epochs):
         for it, data in enumerate(train_loader):
             logger.info(f"Starting Iteration {it} in epoch {epoch}")
@@ -97,28 +106,26 @@ def train(model, train_loader, val_loader, optimizer, device, config, debug=Fals
                 if(loss['total'].item() < config.train.best_loss):
                     best_loss = loss['total'].item()
                     config.train.best_loss = best_loss
+                    config.train.epoch = epoch
                     logger.info(f"Found best model with loss {best_loss}. Saving checkpoint.")
                     torch.save({
                         "model": model.state_dict(),
                         "optimizer": optimizer.state_dict(),
                         "conf": OmegaConf.to_container(config, resolve=True),
-                        "epoch": it,
                     }, os.path.join(args.experiment, "best_model.tar"))
 
             if(config.train.save_every_iter > 0 and it % config.train.save_every_iter == 0 or it == (len(train_loader) - 1)):
                 logger.info(f"Saving checkpoint at epoch {epoch} iteration {it}")
+                config.train.epoch = epoch
                 torch.save({
                     "model": model.state_dict(),
                     "optimizer": optimizer.state_dict(),
                     "conf": OmegaConf.to_container(config, resolve=True),
-                    "epoch": it,
                 }, os.path.join(args.experiment, f"checkpoint_{epoch}_{it}.tar"))
         epoch += 1
 
 def main(args):
-    logger.info('Training with the following configuration: ')
     conf = OmegaConf.load(args.conf)
-    logger.info(conf)    
     assert conf.features_model.name == 'two_view_pipeline'
     device = "cuda" if torch.cuda.is_available() and args.use_cuda else "cpu"
     logger.info(f"Using device {device}")
@@ -138,7 +145,6 @@ def main(args):
         conf = OmegaConf.merge(OmegaConf.create(init_cp["conf"]), conf)
         conf.train = OmegaConf.merge(default_train_conf, conf.train)
     else:
-        # we start a new, fresh training
         conf.train = OmegaConf.merge(default_train_conf, conf.train)
         if conf.train.load_experiment:
             logger.info(f"Will fine-tune from weights of {conf.train.load_experiment}")
@@ -195,6 +201,9 @@ def main(args):
     )
     if args.restore:
         optimizer.load_state_dict(init_cp["optimizer"])
+
+    logger.info('Training with the following configuration: ')
+    logger.info(conf)
 
     train(photo_vo_model, train_loader, val_loader, optimizer, device, conf, args.debug)
 
