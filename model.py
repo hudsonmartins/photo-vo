@@ -86,15 +86,21 @@ class ImagePairEncoder(nn.Module):
 class MotionEstimator(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.flatten = nn.Sequential(nn.Flatten(start_dim=2, end_dim=3),)
-        self.decoder_layers = [config.photo_vo.model.dim_image_emb, 128, 64, 32, 6]
+        self.flatten = nn.Flatten(start_dim=2, end_dim=3)
+        self.decoder = nn.Sequential(
+            nn.Conv1d(config.photo_vo.model.dim_image_emb, 128, 1),
+            nn.ReLU(),
+            nn.Conv1d(128, 64, 1),
+            nn.ReLU(),
+            nn.Conv1d(64, 32, 1),
+            nn.ReLU(),
+            nn.Conv1d(32, 6, 1)
+        )
 
     def forward(self, image_embs, patch_embs):
         patch_embs = patch_embs.permute(0, 2, 1)
         x = torch.cat([self.flatten(image_embs), patch_embs], dim=2)
-        for i in range(len(self.decoder_layers)-1):
-            x = nn.Conv1d(self.decoder_layers[i], self.decoder_layers[i+1], 1)(x)
-            x = nn.ReLU()(x)
+        x = self.decoder(x)
         return torch.mean(x, dim=2)
 
 
@@ -140,6 +146,7 @@ class PhotoVoModel(nn.Module):
         kpts1 = torch.cat([kpts1_valid, torch.full((kpts1_valid.size(0), kpts1.size(1)-kpts1_valid.size(1), kpts1_valid.size(2)), float('nan'), dtype=kpts1_valid.dtype, device=kpts1_valid.device)], dim=1)
         
         # Extract patches
+        #check device of all tensors
         patches0 = get_patches(data['view0']['image'], kpts0, self.config.photo_vo.model.patch_size)
         patches1 = get_patches(data['view1']['image'], kpts1, self.config.photo_vo.model.patch_size)
         

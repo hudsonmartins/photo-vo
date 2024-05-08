@@ -56,6 +56,7 @@ def do_evaluation(val_loader, model, device):
 
 def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, debug=False):
     writer = SummaryWriter(log_dir=config.train.tensorboard_dir)
+    model.to(device)
     while(epoch < config.train.epochs):
         for it, data in enumerate(train_loader):
             logger.info(f"Starting Iteration {it} in epoch {epoch}")
@@ -80,9 +81,12 @@ def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, d
                 for k, v in loss.items():
                     writer.add_scalar("train/loss/" + k, v, tot_n_samples)
                 fig_matches, fig_projs, fig_patches = debug_batch(output, n_pairs=1, figs_dpi=700)
-                writer.add_figure("train/fig/matches", fig_matches, tot_n_samples)
-                writer.add_figure("train/fig/projs", fig_projs, tot_n_samples)
-                writer.add_figure("train/fig/patches", fig_patches, tot_n_samples)
+                if(fig_matches):
+                    writer.add_figure("train/fig/matches", fig_matches, tot_n_samples)
+                if(fig_projs):
+                    writer.add_figure("train/fig/projs", fig_projs, tot_n_samples)
+                if(fig_patches):
+                    writer.add_figure("train/fig/patches", fig_patches, tot_n_samples)
                 writer.add_scalar("train/epoch", epoch, tot_n_samples)
 
             #validation
@@ -93,11 +97,11 @@ def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, d
 
                 for k, v in loss.items():
                     writer.add_scalar("val/loss/" + k, v, tot_n_samples)                    
-                if(fig_matches is not None):
+                if(fig_matches):
                     writer.add_figure("val/fig/matches", fig_matches, tot_n_samples)
-                if(fig_projs is not None):
+                if(fig_projs):
                     writer.add_figure("val/fig/projs", fig_projs, tot_n_samples)
-                if(fig_patches is not None):
+                if(fig_patches):
                     writer.add_figure("val/fig/patches", fig_patches, tot_n_samples)
                 writer.add_scalar("val/epoch", epoch, tot_n_samples)
 
@@ -125,28 +129,14 @@ def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, d
 
 def main(args):
     conf = OmegaConf.load(args.conf)
+    conf.train = OmegaConf.merge(default_train_conf, conf.train)
     assert conf.features_model.name == 'two_view_pipeline'
     device = "cuda" if torch.cuda.is_available() and args.use_cuda else "cpu"
     logger.info(f"Using device {device}")
-    
-    if args.restore:
-        logger.info(f"Restoring from previous training of {args.experiment}")
-        ckpts = glob.glob(os.path.join(args.experiment, "checkpoint_*.tar"))
-        ckpts = [os.path.basename(ckpt) for ckpt in ckpts]
-        if len(ckpts) > 0:
-            init_cp_name = sorted(ckpts)[-1]
-            init_cp = torch.load(os.path.join(args.experiment, init_cp_name), map_location="cpu")
-            logger.info(f"Will load model {init_cp_name}")
-        else:
-            init_cp = torch.load(os.path.join(args.experiment, "best_model.tar"), map_location="cpu")
-            logger.info(f"Will load model best_model.tar")
-        
-        conf = OmegaConf.merge(OmegaConf.create(init_cp["conf"]), conf)
-        conf.train = OmegaConf.merge(default_train_conf, conf.train)
-    else:
-        conf.train = OmegaConf.merge(default_train_conf, conf.train)
-        if conf.train.load_experiment:
-            logger.info(f"Will fine-tune from weights of {conf.train.load_experiment}")
+    init_cp = None
+    if conf.train.load_experiment:
+        if(not args.load_best_model):
+            logger.info(f"Trying to restore from previous training of {args.experiment}")
             ckpts = glob.glob(os.path.join(args.experiment, "checkpoint_*.tar"))
             ckpts = [os.path.basename(ckpt) for ckpt in ckpts]
             if len(ckpts) > 0:
@@ -154,10 +144,13 @@ def main(args):
                 init_cp = torch.load(os.path.join(args.experiment, init_cp_name), map_location="cpu")
                 logger.info(f"Will load model {init_cp_name}")
             else:
-                init_cp = torch.load(os.path.join(args.experiment, "best_model.tar"), map_location="cpu")
-                logger.info(f"Will load model best_model.tar")
-
-
+                logger.info(f"No checkpoint found in {args.experiment}")
+        else:
+            init_cp = torch.load(os.path.join(args.experiment, "best_model.tar"), map_location="cpu")
+            logger.info(f"Loading model best_model.tar")
+            
+        if(init_cp is not None):
+            conf = OmegaConf.merge(OmegaConf.create(init_cp["conf"]), conf)
             # load the model config of the old setup, and overwrite with current config
             conf.photo_vo = OmegaConf.merge(
                 OmegaConf.create(init_cp["conf"]).photo_vo, conf.photo_vo
@@ -165,8 +158,6 @@ def main(args):
             conf.features_model = OmegaConf.merge(
                 OmegaConf.create(init_cp["conf"]).features_model, conf.features_model
             )
-        else:
-            init_cp = None
 
     optimizer_fn = {
         "sgd": torch.optim.SGD,
@@ -189,19 +180,16 @@ def main(args):
 
     os.makedirs(args.experiment, exist_ok=True)
     photo_vo_model = get_photo_vo_model(conf)
-    photo_vo_model.to(device)
-    
+    optimizer = optimizer_fn(
+        photo_vo_model.parameters(), lr=conf.train.lr, **conf.train.optimizer_options
+    )
+
     epoch = 0
     if init_cp is not None:
         photo_vo_model.load_state_dict(init_cp["model"], strict=False)
         epoch = init_cp["epoch"]
-        logger.info(f"Loaded model from {args.experiment}")
-    
-    optimizer = optimizer_fn(
-        photo_vo_model.parameters(), lr=conf.train.lr, **conf.train.optimizer_options
-    )
-    if args.restore:
         optimizer.load_state_dict(init_cp["optimizer"])
+        logger.info(f"Restored model from epoch {epoch}")
 
     logger.info('Training with the following configuration: ')
     logger.info(conf)
@@ -214,14 +202,8 @@ if __name__ == "__main__":
     parser.add_argument("experiment", type=str)
     parser.add_argument("--conf", type=str)
     parser.add_argument("--debug", action="store_true")
-    parser.add_argument("--restore", action="store_true")
-    parser.add_argument("--use-cuda", action="store_true")
-    parser.add_argument(
-        "--compile",
-        default=None,
-        type=str,
-        choices=["default", "reduce-overhead", "max-autotune"],
-    )
+    parser.add_argument("--load_best_model", action="store_true")
+    parser.add_argument("--use_cuda", action="store_true")
 
     args = parser.parse_args()
     main(args)

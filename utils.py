@@ -2,6 +2,7 @@ import torch
 import cv2
 import numpy as np
 import matplotlib.cm as cm
+from torchvision import transforms
 from gluefactory.geometry.depth import sample_depth, project
 from gluefactory.utils.tensor import batch_to_device
 from gluefactory.visualization.viz2d import plot_heatmaps, plot_image_grid, plot_keypoints, plot_matches, cm_RdGn
@@ -12,9 +13,11 @@ def normalize_image(image):
     """
     Normalize using imagenet mean and std
     """
-    mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
-    std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
-    return (image - mean) / std
+    mean = [0.485, 0.456, 0.406]
+    std = [0.229, 0.224, 0.225]
+    normalize = transforms.Normalize(mean, std)
+    return normalize(image)
+
 
 
 def get_sorted_matches(data):
@@ -127,7 +130,8 @@ def debug_batch(data, n_pairs=2, figs_dpi=100):
     patches1_0 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches1_0'][i] if not torch.any(p < 0)]
     patches1 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches1'][i] if not torch.any(p < 0)]
     patches0_1 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches0_1'][i] if not torch.any(p < 0)]
-    if(len(patches0) > 0 and len(patches1_0) > 0 and len(patches1) > 0 and len(patches0_1) > 0):
+    
+    if(len(patches0) > 10 and len(patches1_0) > 10 and len(patches1) > 10 and len(patches0_1) > 10):
         fig_patches, axes = plot_image_grid([patches0[:10], patches1_0[:10], patches1[:10], patches0_1[:10]], return_fig=True, set_lim=True)
     else:
         fig_patches = None
@@ -205,7 +209,7 @@ def draw_matches(image0, image1, kpts0, kpts1, scores=None):
 
 def get_patches(img, pts, patch_size=16):
     """Given an image and a set of points, return the patches around the points"""
-
+    device = img.device
     batch_size = img.size(0)
     patch_size = int(patch_size)
     half = patch_size // 2
@@ -218,14 +222,14 @@ def get_patches(img, pts, patch_size=16):
         for j in range(pts_i.size(0)):
             if torch.isnan(pts_i[j]).any():
                 #append nan tensor
-                patches_i.append(torch.full((3, patch_size, patch_size), float('nan')))
+                patches_i.append(torch.full((3, patch_size, patch_size), float('nan')).to(device))
                 continue
             x, y = pts_i[j].int()            
             patch = img_pad[..., y:y+patch_size, x:x+patch_size]
             patches_i.append(patch)
-        patches.append(torch.stack(patches_i))
-
+        patches.append(torch.stack(patches_i))    
     return torch.stack(patches)
+
 
 def _axis_angle_rotation(axis: str, angle: torch.Tensor) -> torch.Tensor:
     """
