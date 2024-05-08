@@ -56,7 +56,6 @@ def do_evaluation(val_loader, model, device):
 
 def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, debug=False):
     writer = SummaryWriter(log_dir=config.train.tensorboard_dir)
-    model.to(device)
     while(epoch < config.train.epochs):
         for it, data in enumerate(train_loader):
             logger.info(f"Starting Iteration {it} in epoch {epoch}")
@@ -183,7 +182,7 @@ def main(args):
     optimizer = optimizer_fn(
         photo_vo_model.parameters(), lr=conf.train.lr, **conf.train.optimizer_options
     )
-
+    photo_vo_model.to(device)
     epoch = 0
     if init_cp is not None:
         photo_vo_model.load_state_dict(init_cp["model"], strict=False)
@@ -193,7 +192,11 @@ def main(args):
 
     logger.info('Training with the following configuration: ')
     logger.info(conf)
-    
+    if(conf.features_model.freeze):
+        logger.info("Freezing the features model")
+        for param in photo_vo_model.matcher.parameters():
+            param.requires_grad = False
+            
     train(photo_vo_model, train_loader, val_loader, optimizer, device, conf, epoch, args.debug)
 
 
