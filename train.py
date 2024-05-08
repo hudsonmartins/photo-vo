@@ -24,7 +24,6 @@ logger.addHandler(handler)
 logger.propagate = False
 
 default_train_conf = {
-    "epoch": 0,  # current epoch
     "epochs": 1,  # number of epochs
     "optimizer": "adam",  # name of optimizer in [adam, sgd, rmsprop]
     "optimizer_options": {},  # optional arguments passed to the optimizer
@@ -55,9 +54,8 @@ def do_evaluation(val_loader, model, device):
     return avg_losses, fig_matches, fig_projs, fig_patches
 
 
-def train(model, train_loader, val_loader, optimizer, device, config, debug=False):
+def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, debug=False):
     writer = SummaryWriter(log_dir=config.train.tensorboard_dir)
-    epoch = config.train.epoch
     while(epoch < config.train.epochs):
         for it, data in enumerate(train_loader):
             logger.info(f"Starting Iteration {it} in epoch {epoch}")
@@ -106,21 +104,22 @@ def train(model, train_loader, val_loader, optimizer, device, config, debug=Fals
                 if(loss['total'].item() < config.train.best_loss):
                     best_loss = loss['total'].item()
                     config.train.best_loss = best_loss
-                    config.train.epoch = epoch
                     logger.info(f"Found best model with loss {best_loss}. Saving checkpoint.")
                     torch.save({
                         "model": model.state_dict(),
                         "optimizer": optimizer.state_dict(),
                         "conf": OmegaConf.to_container(config, resolve=True),
+                        "epoch": epoch,
                     }, os.path.join(args.experiment, "best_model.tar"))
 
             if(config.train.save_every_iter > 0 and it % config.train.save_every_iter == 0 or it == (len(train_loader) - 1)):
                 logger.info(f"Saving checkpoint at epoch {epoch} iteration {it}")
-                config.train.epoch = epoch
+                
                 torch.save({
                     "model": model.state_dict(),
                     "optimizer": optimizer.state_dict(),
                     "conf": OmegaConf.to_container(config, resolve=True),
+                    "epoch": epoch,
                 }, os.path.join(args.experiment, f"checkpoint_{epoch}_{it}.tar"))
         epoch += 1
 
@@ -191,9 +190,11 @@ def main(args):
     os.makedirs(args.experiment, exist_ok=True)
     photo_vo_model = get_photo_vo_model(conf)
     photo_vo_model.to(device)
-
+    
+    epoch = 0
     if init_cp is not None:
         photo_vo_model.load_state_dict(init_cp["model"], strict=False)
+        epoch = init_cp["epoch"]
         logger.info(f"Loaded model from {args.experiment}")
     
     optimizer = optimizer_fn(
@@ -204,8 +205,8 @@ def main(args):
 
     logger.info('Training with the following configuration: ')
     logger.info(conf)
-
-    train(photo_vo_model, train_loader, val_loader, optimizer, device, conf, args.debug)
+    
+    train(photo_vo_model, train_loader, val_loader, optimizer, device, conf, epoch, args.debug)
 
 
 if __name__ == "__main__":
