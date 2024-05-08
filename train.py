@@ -50,7 +50,7 @@ def do_evaluation(val_loader, model, device):
                 continue
             avg_losses = {k: v + loss[k].item() for k, v in loss.items()}
     avg_losses = {k: v / len(val_loader) for k, v in avg_losses.items()}
-    fig_matches, fig_projs, fig_patches = debug_batch(output, n_pairs=1, figs_dpi=700)
+    fig_matches, fig_projs, fig_patches = debug_batch(output, figs_dpi=700)
     return avg_losses, fig_matches, fig_projs, fig_patches
 
 
@@ -72,14 +72,14 @@ def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, d
             optimizer.step()
 
             if(debug):
-                debug_batch(output, n_pairs=1, figs_dpi=100)
+                debug_batch(output, figs_dpi=100)
                 plt.show()
 
             if(it % config.train.log_every_iter == 0):
                 logger.info(f"[Train] Epoch {epoch} Iteration {it} Loss: {loss['total'].item()}")
                 for k, v in loss.items():
                     writer.add_scalar("train/loss/" + k, v, tot_n_samples)
-                fig_matches, fig_projs, fig_patches = debug_batch(output, n_pairs=1, figs_dpi=700)
+                fig_matches, fig_projs, fig_patches = debug_batch(output, figs_dpi=700)
                 if(fig_matches):
                     writer.add_figure("train/fig/matches", fig_matches, tot_n_samples)
                 if(fig_projs):
@@ -189,6 +189,7 @@ def main(args):
         epoch = init_cp["epoch"]
         optimizer.load_state_dict(init_cp["optimizer"])
         logger.info(f"Restored model from epoch {epoch}")
+    del init_cp
 
     logger.info('Training with the following configuration: ')
     logger.info(conf)

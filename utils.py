@@ -3,10 +3,10 @@ import cv2
 import numpy as np
 import matplotlib.cm as cm
 from torchvision import transforms
+import matplotlib.pyplot as plt
 from gluefactory.geometry.depth import sample_depth, project
 from gluefactory.utils.tensor import batch_to_device
 from gluefactory.visualization.viz2d import plot_heatmaps, plot_image_grid, plot_keypoints, plot_matches, cm_RdGn
-from gluefactory.geometry.wrappers import Pose
 
 
 def normalize_image(image):
@@ -17,7 +17,6 @@ def normalize_image(image):
     std = [0.229, 0.224, 0.225]
     normalize = transforms.Normalize(mean, std)
     return normalize(image)
-
 
 
 def get_sorted_matches(data):
@@ -40,10 +39,9 @@ def get_sorted_matches(data):
     return b_mcfs
         
 
-def debug_batch(data, n_pairs=2, figs_dpi=100):
+def debug_batch(data, figs_dpi=100):
     '''
-    Visualize the first n_pairs in the batch
-    Copied from gluefactory.visualization.visualize_batch.py
+    Visualize the first pair in the batch
     '''
     if "0to1" in data.keys():
         data = data["0to1"]
@@ -51,16 +49,8 @@ def debug_batch(data, n_pairs=2, figs_dpi=100):
     data = batch_to_device(data, "cpu", non_blocking=False)
     images, kpts, matches, mcolors, images_projs, patches0, patches1 = [], [], [], [], [], [], []
     heatmaps = []
-    view0, view1 = data["view0"], data["view1"]
-    pred = data["pred_vo"]
-    R_pred = euler_angles_to_matrix(pred[..., 3:], "XYZ")
-    t_pred = pred[..., :3]
-    T_0to1_pred = Pose.from_Rt(R_pred, t_pred)
-    T_1to0_pred = T_0to1_pred.inv()
+    view0, view1 = data["view0"], data["view1"]    
 
-    n_pairs = min(n_pairs, view0["image"].shape[0])
-    
-    assert view0["image"].shape[0] >= n_pairs
     view0['image'].detach().cpu().numpy()
     view1['image'].detach().cpu().numpy()
     view0['patches_coords'].detach().cpu().numpy()
@@ -74,69 +64,89 @@ def debug_batch(data, n_pairs=2, figs_dpi=100):
     kpts0_gt, kpts0_1_gt = get_kpts_projection(view0['patches_coords'], depth0, depth1, camera0, camera1, data["T_0to1"])
     kpts1_gt, kpts1_0_gt = get_kpts_projection(view1['patches_coords'], depth1, depth0, camera1, camera0, data["T_1to0"])
     
-    
-    for i in range(n_pairs):
-        valid = (m0[i] > -1)
-        kpm0, kpm1 = kp0[i][valid].numpy(), kp1[i][m0[i][valid]].numpy()
-        images.append(
-            [view0["image"][i].permute(1, 2, 0), view1["image"][i].permute(1, 2, 0)]
+    valid = (m0[0] > -1)
+    kpm0, kpm1 = kp0[0][valid].numpy(), kp1[0][m0[0][valid]].numpy()
+    images.append(
+        [view0["image"][0].permute(1, 2, 0), view1["image"][0].permute(1, 2, 0)]
+    )
+    kpts.append([kp0[0], kp1[0]])
+    matches.append((kpm0, kpm1))
+
+    correct = m0[0][valid]
+
+    if "heatmap0" in data.keys():
+        heatmaps.append(
+            [
+                torch.sigmoid(data["heatmap0"][i, 0]),
+                torch.sigmoid(data["heatmap1"][i, 0]),
+            ]
         )
-        kpts.append([kp0[i], kp1[i]])
-        matches.append((kpm0, kpm1))
+    elif "depth" in view0.keys() and view0["depth"] is not None:
+        heatmaps.append([view0["depth"][0], view1["depth"][0]])
 
-        correct = m0[i][valid]
+    mcolors.append(cm_RdGn(correct).tolist())
 
-        if "heatmap0" in data.keys():
-            heatmaps.append(
-                [
-                    torch.sigmoid(data["heatmap0"][i, 0]),
-                    torch.sigmoid(data["heatmap1"][i, 0]),
-                ]
-            )
-        elif "depth" in view0.keys() and view0["depth"] is not None:
-            heatmaps.append([view0["depth"][i], view1["depth"][i]])
+    img_patches0 = draw_patches(view0["image"][0].permute(1, 2, 0)*255, kpts0_gt[0], color=(0,255,0), patch_size=16)
+    img_patches1 = draw_patches(view1["image"][0].permute(1, 2, 0)*255, kpts1_gt[0], color=(0,255,0), patch_size=16)
+    
+    img_patches0 = draw_patches(img_patches0, data['photo_loss']['kpts1_0'][0].detach().numpy(), color=(255,0,0), patch_size=16)
+    img_patches1 = draw_patches(img_patches1, data['photo_loss']['kpts0_1'][0].detach().numpy(), color=(255,0,0), patch_size=16)
 
-        mcolors.append(cm_RdGn(correct).tolist())
-
-        img_patches0 = draw_patches(view0["image"][i].permute(1, 2, 0)*255, kpts0_gt[i], color=(0,255,0), patch_size=16)
-        img_patches1 = draw_patches(view1["image"][i].permute(1, 2, 0)*255, kpts1_gt[i], color=(0,255,0), patch_size=16)
-        
-        img_patches0 = draw_patches(img_patches0, data['photo_loss']['kpts1_0'][i].detach().numpy(), color=(255,0,0), patch_size=16)
-        img_patches1 = draw_patches(img_patches1, data['photo_loss']['kpts0_1'][i].detach().numpy(), color=(255,0,0), patch_size=16)
-
-        img_patches0 = draw_patches(img_patches0, kpts1_0_gt[i].detach().numpy(), color=(0,0,255))
-        img_patches1 = draw_patches(img_patches1, kpts0_1_gt[i].detach().numpy(), color=(0,0,255), patch_size=16)
-        try:
-            img_patches0 = cv2.putText(img_patches0, 'Green: Exctracted', (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1, cv2.LINE_AA)
-            img_patches0 = cv2.putText(img_patches0, 'Red: Predicted Projection', (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0), 1, cv2.LINE_AA)
-            img_patches0 = cv2.putText(img_patches0, 'Blue: Ground Truth Projection', (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1, cv2.LINE_AA)
-        except:
-            pass
-        images_projs.append([img_patches0, img_patches1])
+    img_patches0 = draw_patches(img_patches0, kpts1_0_gt[0].detach().numpy(), color=(0,0,255))
+    img_patches1 = draw_patches(img_patches1, kpts0_1_gt[0].detach().numpy(), color=(0,0,255), patch_size=16)
+    try:
+        img_patches0 = cv2.putText(img_patches0, 'Green: Exctracted', (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1, cv2.LINE_AA)
+        img_patches0 = cv2.putText(img_patches0, 'Red: Predicted Projection', (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0), 1, cv2.LINE_AA)
+        img_patches0 = cv2.putText(img_patches0, 'Blue: Ground Truth Projection', (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1, cv2.LINE_AA)
+    except:
+        pass
+    images_projs.append([img_patches0, img_patches1])
         
 
     fig_matches, axes = plot_image_grid(images, return_fig=True, set_lim=True, dpi=figs_dpi)
     if len(heatmaps) > 0:
-       [plot_heatmaps(heatmaps[i], axes=axes[i], a=1.0) for i in range(n_pairs)]
-    [plot_keypoints(kpts[i], axes=axes[i], colors="royalblue") for i in range(n_pairs)]
-    [
-        plot_matches(*matches[i], color=mcolors[i], axes=axes[i], a=0.5, lw=1.0, ps=0.0)
-        for i in range(n_pairs)
-    ]
+       plot_heatmaps(heatmaps[0], axes=axes[0], a=1.0)
+    plot_keypoints(kpts[0], axes=axes[0], colors="royalblue")
+    plot_matches(*matches[0], color=mcolors[0], axes=axes[0], a=0.5, lw=1.0, ps=0.0)
 
     fig_projs, axes = plot_image_grid(images_projs, return_fig=True, set_lim=True, dpi=figs_dpi)   
 
-    patches0 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches0'][i] if not torch.any(p < 0)]
-    patches1_0 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches1_0'][i] if not torch.any(p < 0)]
-    patches1 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches1'][i] if not torch.any(p < 0)]
-    patches0_1 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches0_1'][i] if not torch.any(p < 0)]
+    patches0 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches0'][0] if not torch.any(p < 0)]
+    patches1_0 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches1_0'][0] if not torch.any(p < 0)]
+    patches1 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches1'][0] if not torch.any(p < 0)]
+    patches0_1 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches0_1'][0] if not torch.any(p < 0)]
     
     if(len(patches0) > 10 and len(patches1_0) > 10 and len(patches1) > 10 and len(patches0_1) > 10):
         fig_patches, axes = plot_image_grid([patches0[:10], patches1_0[:10], patches1[:10], patches0_1[:10]], return_fig=True, set_lim=True)
     else:
-        fig_patches = None
-
+        fig_patches = None    
+    origin = torch.tensor([0, 0, 0, 0, 0, 0])
+    draw_camera_poses([origin, data['gt_vo'][0]], ['Origin', 'Ground Truth VO'])
     return fig_matches, fig_projs, fig_patches
+
+
+def draw_camera_poses(poses, labels):
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+
+    for (pose, label) in zip(poses, labels):
+        # Extracting translation and rotation components
+        translation = pose[:3]
+        rotation = euler_angles_to_matrix(pose[3:], 'XYZ')
+        # Plotting camera coordinate axes
+        ax.quiver(*translation, *rotation[:, 0], color='r')
+        ax.quiver(*translation, *rotation[:, 1], color='g')
+        ax.quiver(*translation, *rotation[:, 2], color='b')
+        # Adding text labels next to camera pose
+        ax.text(*translation, label, color='black')
+
+    # Set plot limits and labels
+    ax.set_xlim([-5, 5])
+    ax.set_ylim([-5, 5])
+    ax.set_zlim([-5, 5])
+    ax.set_title('Camera Poses')
+    ax.legend()
+    plt.show()
 
 
 def get_kpts_projection(kpts, depth0, depth1, camera0, camera1, T_0to1):
