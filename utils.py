@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.cm as cm
 from torchvision import transforms
 import matplotlib.pyplot as plt
+from scipy.spatial.transform import Rotation as R
 from gluefactory.geometry.depth import sample_depth, project
 from gluefactory.utils.tensor import batch_to_device
 from gluefactory.visualization.viz2d import plot_heatmaps, plot_image_grid, plot_keypoints, plot_matches, cm_RdGn
@@ -121,32 +122,35 @@ def debug_batch(data, figs_dpi=100):
     else:
         fig_patches = None    
     origin = torch.tensor([0, 0, 0, 0, 0, 0])
-    draw_camera_poses([origin, data['gt_vo'][0]], ['Origin', 'Ground Truth VO'])
-    return fig_matches, fig_projs, fig_patches
+    fig_cameras = draw_camera_poses([origin, data['gt_vo'][0], data['pred_vo'][0].detach()], 
+                                    ['Origin', 'Ground Truth VO', 'Predicted VO'],
+                                    dpi=figs_dpi)
+    return {"matches": fig_matches, "projs": fig_projs, "patches": fig_patches, "cameras": fig_cameras}
 
 
-def draw_camera_poses(poses, labels):
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-
+def draw_camera_poses(poses, labels, dpi=100):
+    fig = plt.figure(dpi=dpi)
+    
     for (pose, label) in zip(poses, labels):
         # Extracting translation and rotation components
-        translation = pose[:3]
-        rotation = euler_angles_to_matrix(pose[3:], 'XYZ')
+        translation = pose[:2]
+        rotation = R.from_euler('xyz', pose[3:]).as_matrix()  # Full Euler vector
+
         # Plotting camera coordinate axes
-        ax.quiver(*translation, *rotation[:, 0], color='r')
-        ax.quiver(*translation, *rotation[:, 1], color='g')
-        ax.quiver(*translation, *rotation[:, 2], color='b')
-        # Adding text labels next to camera pose
-        ax.text(*translation, label, color='black')
+        plt.quiver(*translation, rotation[0, 0], rotation[1, 0], scale=0.01, color='r', label='X axis')
+        plt.quiver(*translation, rotation[0, 1], rotation[1, 1], scale=0.01, color='g', label='Y axis')
+        #add label
+        plt.text(translation[0], translation[1], label, fontsize=12, color='black')
 
     # Set plot limits and labels
-    ax.set_xlim([-5, 5])
-    ax.set_ylim([-5, 5])
-    ax.set_zlim([-5, 5])
-    ax.set_title('Camera Poses')
-    ax.legend()
-    plt.show()
+    plt.xlim([-1, 1])
+    plt.ylim([-1, 1])
+    plt.xlabel('X')
+    plt.ylabel('Y')
+    plt.gca().set_aspect('equal', adjustable='box')
+    plt.grid(True)
+    plt.title('Camera Poses')
+    return fig
 
 
 def get_kpts_projection(kpts, depth0, depth1, camera0, camera1, T_0to1):
@@ -390,32 +394,3 @@ def matrix_to_euler_angles(matrix: torch.Tensor, convention: str) -> torch.Tenso
         ),
     )
     return torch.stack(o, -1)
-
-def euler_angles_to_matrix(euler_angles: torch.Tensor, convention: str) -> torch.Tensor:
-    """
-    Extracted from https://github.com/facebookresearch/pytorch3d
-    Convert rotations given as Euler angles in radians to rotation matrices.
-
-    Args:
-        euler_angles: Euler angles in radians as tensor of shape (..., 3).
-        convention: Convention string of three uppercase letters from
-            {"X", "Y", and "Z"}.
-
-    Returns:
-        Rotation matrices as tensor of shape (..., 3, 3).
-    """
-    if euler_angles.dim() == 0 or euler_angles.shape[-1] != 3:
-        raise ValueError("Invalid input euler angles.")
-    if len(convention) != 3:
-        raise ValueError("Convention must have 3 letters.")
-    if convention[1] in (convention[0], convention[2]):
-        raise ValueError(f"Invalid convention {convention}.")
-    for letter in convention:
-        if letter not in ("X", "Y", "Z"):
-            raise ValueError(f"Invalid letter {letter} in convention string.")
-    matrices = [
-        _axis_angle_rotation(c, e)
-        for c, e in zip(convention, torch.unbind(euler_angles, -1))
-    ]
-    # return functools.reduce(torch.matmul, matrices)
-    return torch.matmul(torch.matmul(matrices[0], matrices[1]), matrices[2])

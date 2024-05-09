@@ -39,7 +39,7 @@ default_train_conf = OmegaConf.create(default_train_conf)
 
 
 def do_evaluation(val_loader, model, device):
-    avg_losses = {}
+    avg_losses = None
     for it, data in enumerate(val_loader):
         data = batch_to_device(data, device, non_blocking=True)
         with torch.no_grad():
@@ -49,9 +49,11 @@ def do_evaluation(val_loader, model, device):
                 print(f"Detected NAN, skipping iteration {it}")
                 continue
             avg_losses = {k: v + loss[k].item() for k, v in loss.items()}
+    if(avg_losses is None):
+        return None, None
     avg_losses = {k: v / len(val_loader) for k, v in avg_losses.items()}
-    fig_matches, fig_projs, fig_patches = debug_batch(output, figs_dpi=700)
-    return avg_losses, fig_matches, fig_projs, fig_patches
+    figs = debug_batch(output, figs_dpi=700)
+    return avg_losses, figs
 
 
 def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, debug=False):
@@ -79,41 +81,36 @@ def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, d
                 logger.info(f"[Train] Epoch {epoch} Iteration {it} Loss: {loss['total'].item()}")
                 for k, v in loss.items():
                     writer.add_scalar("train/loss/" + k, v, tot_n_samples)
-                fig_matches, fig_projs, fig_patches = debug_batch(output, figs_dpi=700)
-                if(fig_matches):
-                    writer.add_figure("train/fig/matches", fig_matches, tot_n_samples)
-                if(fig_projs):
-                    writer.add_figure("train/fig/projs", fig_projs, tot_n_samples)
-                if(fig_patches):
-                    writer.add_figure("train/fig/patches", fig_patches, tot_n_samples)
+                figs = debug_batch(output, figs_dpi=700)
+                for k, v in figs.items():
+                    if(v):
+                        writer.add_figure("train/fig/" + k, v, tot_n_samples)
                 writer.add_scalar("train/epoch", epoch, tot_n_samples)
 
             #validation
             if(config.train.eval_every_iter > 0 and it % config.train.eval_every_iter == 0 or it == (len(train_loader) - 1)):                
-                logger.info(f"[Val] Epoch: {epoch} Iteration: {it} Loss: {loss['total'].item()}")
                 model.eval()
-                loss, fig_matches, fig_projs, fig_patches = do_evaluation(val_loader, model, device)
+                loss, figs = do_evaluation(val_loader, model, device)
+                if(loss):
+                    logger.info(f"[Val] Epoch: {epoch} Iteration: {it} Loss: {loss['total'].item()}")
 
-                for k, v in loss.items():
-                    writer.add_scalar("val/loss/" + k, v, tot_n_samples)                    
-                if(fig_matches):
-                    writer.add_figure("val/fig/matches", fig_matches, tot_n_samples)
-                if(fig_projs):
-                    writer.add_figure("val/fig/projs", fig_projs, tot_n_samples)
-                if(fig_patches):
-                    writer.add_figure("val/fig/patches", fig_patches, tot_n_samples)
-                writer.add_scalar("val/epoch", epoch, tot_n_samples)
+                    for k, v in loss.items():
+                        writer.add_scalar("val/loss/" + k, v, tot_n_samples)                    
+                    for k, v in figs.items():
+                        if(v):
+                            writer.add_figure("val/fig/" + k, v, tot_n_samples)
+                    writer.add_scalar("val/epoch", epoch, tot_n_samples)
 
-                if(loss['total'].item() < config.train.best_loss):
-                    best_loss = loss['total'].item()
-                    config.train.best_loss = best_loss
-                    logger.info(f"Found best model with loss {best_loss}. Saving checkpoint.")
-                    torch.save({
-                        "model": model.state_dict(),
-                        "optimizer": optimizer.state_dict(),
-                        "conf": OmegaConf.to_container(config, resolve=True),
-                        "epoch": epoch,
-                    }, os.path.join(args.experiment, "best_model.tar"))
+                    if(loss['total'].item() < config.train.best_loss):
+                        best_loss = loss['total'].item()
+                        config.train.best_loss = best_loss
+                        logger.info(f"Found best model with loss {best_loss}. Saving checkpoint.")
+                        torch.save({
+                            "model": model.state_dict(),
+                            "optimizer": optimizer.state_dict(),
+                            "conf": OmegaConf.to_container(config, resolve=True),
+                            "epoch": epoch,
+                        }, os.path.join(args.experiment, "best_model.tar"))
 
             if(config.train.save_every_iter > 0 and it % config.train.save_every_iter == 0 or it == (len(train_loader) - 1)):
                 logger.info(f"Saving checkpoint at epoch {epoch} iteration {it}")
