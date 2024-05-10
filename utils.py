@@ -123,35 +123,41 @@ def debug_batch(data, figs_dpi=100):
         fig_patches = None    
     origin = torch.tensor([0, 0, 0, 0, 0, 0])
     fig_cameras = draw_camera_poses([origin, data['gt_vo'][0], data['pred_vo'][0].detach()], 
-                                    ['Origin', 'Ground Truth VO', 'Predicted VO'],
+                                    ['cam0', 'gt_cam1', 'pred_cam1'],
                                     dpi=figs_dpi)
     return {"matches": fig_matches, "projs": fig_projs, "patches": fig_patches, "cameras": fig_cameras}
 
 
 def draw_camera_poses(poses, labels, dpi=100):
-    fig = plt.figure(dpi=dpi)
+    n_plots = 2
+    fig, axs = plt.subplots(n_plots, 1, figsize=(6, 6), dpi=dpi)
     
     for (pose, label) in zip(poses, labels):
         # Extracting translation and rotation components
-        translation = pose[:2]
-        rotation = R.from_euler('xyz', pose[3:]).as_matrix()  # Full Euler vector
+        xy = pose[:2]
+        xz = [pose[0], pose[2]]
+        rotation = R.from_euler('xyz', pose[3:]).as_matrix() 
 
-        # Plotting camera coordinate axes
-        plt.quiver(*translation, rotation[0, 0], rotation[1, 0], scale=0.01, color='r', label='X axis')
-        plt.quiver(*translation, rotation[0, 1], rotation[1, 1], scale=0.01, color='g', label='Y axis')
-        #add label
-        plt.text(translation[0], translation[1], label, fontsize=12, color='black')
+        # Plot 1 shows XY plane
+        axs[0].quiver(*xy, rotation[0, 0], rotation[1, 0], headaxislength=0, headwidth=0, headlength=0, color='r', label='X axis')
+        axs[0].quiver(*xy, rotation[0, 1], rotation[1, 1], headaxislength=0, headwidth=0, headlength=0, color='g', label='Y axis')
+        axs[0].text(xy[0], xy[1], label, fontsize=12, color='black')
+        axs[0].set_xlabel('X')
+        axs[0].set_ylabel('Y')
 
-    # Set plot limits and labels
-    plt.xlim([-1, 1])
-    plt.ylim([-1, 1])
-    plt.xlabel('X')
-    plt.ylabel('Y')
-    plt.gca().set_aspect('equal', adjustable='box')
-    plt.grid(True)
-    plt.title('Camera Poses')
+        # Plot 2 shows XZ plane
+        axs[1].quiver(*xz, rotation[0, 0], rotation[2, 0], headaxislength=0, headwidth=0, headlength=0, color='r', label='X axis')
+        axs[1].quiver(*xz, rotation[0, 2], rotation[2, 2], headaxislength=0, headwidth=0, headlength=0, color='b', label='Z axis')
+        axs[1].text(xz[0], xz[1], label, fontsize=12, color='black')
+        axs[1].set_xlabel('X')
+        axs[1].set_ylabel('Z')
+
+    for i in range(n_plots):
+        axs[i].grid(True)
+        axs[i].set_xlim([-1, 1])
+        axs[i].set_ylim([-1, 1])
+    
     return fig
-
 
 def get_kpts_projection(kpts, depth0, depth1, camera0, camera1, T_0to1):
     d, valid = sample_depth(kpts, depth0)
