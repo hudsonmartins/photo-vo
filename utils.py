@@ -1,346 +1,254 @@
-import cv2
 import torch
+import cv2
 import numpy as np
-from collections import defaultdict
-import torch.nn.functional as F
 import matplotlib.cm as cm
+from torchvision import transforms
+import matplotlib.pyplot as plt
+from scipy.spatial.transform import Rotation as R
+from gluefactory.geometry.depth import sample_depth, project
+from gluefactory.utils.tensor import batch_to_device
+from gluefactory.visualization.viz2d import plot_heatmaps, plot_image_grid, plot_keypoints, plot_matches, cm_RdGn
 
 
-def interpolate_depth(pos, depth):
+def normalize_image(image):
+    """
+    Normalize using imagenet mean and std
+    """
+    mean = [0.485, 0.456, 0.406]
+    std = [0.229, 0.224, 0.225]
+    normalize = transforms.Normalize(mean, std)
+    return normalize(image)
 
-    device = pos.device
-    ids = torch.arange(0, pos.size(1), device=device)
-    h, w = depth.size()
+
+def get_sorted_matches(data):
+    """
+    Find matches ordered by score
+    """
     
-    i = pos[1, :]
-    j = pos[0, :]
+    m0 = data["matches0"]
+    scores0 = data["matching_scores0"]
+    b_size = m0.size(0)
+    b_mcfs = torch.empty(b_size, m0.size(1), 3)
 
-    # Valid corners
-    i_top_left = torch.floor(i).long()
-    j_top_left = torch.floor(j).long()
-    valid_top_left = torch.min(i_top_left >= 0, j_top_left >= 0)
+    for i in range(b_size):
+        mcfs = torch.empty(m0.size(1), 3)
+        for j, (m, c) in enumerate(zip(m0[i], scores0[i])):
+            mcfs[j] = torch.tensor([j, m, c])  
+        sorted_indices = torch.argsort(mcfs[:, 2], descending=True)
+        sorted_mcfs = mcfs[sorted_indices]
+        b_mcfs[i] = sorted_mcfs
+    return b_mcfs
+        
 
-    i_top_right = torch.floor(i).long()
-    j_top_right = torch.ceil(j).long()
-    valid_top_right = torch.min(i_top_right >= 0, j_top_right < w)
+def debug_batch(data, figs_dpi=100):
+    '''
+    Visualize the first pair in the batch
+    '''
+    if "0to1" in data.keys():
+        data = data["0to1"]
+    
+    data = batch_to_device(data, "cpu", non_blocking=False)
+    images, kpts, matches, mcolors, images_projs, patches0, patches1 = [], [], [], [], [], [], []
+    heatmaps = []
+    view0, view1 = data["view0"], data["view1"]    
 
-    i_bottom_left = torch.ceil(i).long()
-    j_bottom_left = torch.floor(j).long()
-    valid_bottom_left = torch.min(i_bottom_left < h, j_bottom_left >= 0)
+    view0['image'].detach().cpu().numpy()
+    view1['image'].detach().cpu().numpy()
+    view0['patches_coords'].detach().cpu().numpy()
+    view1['patches_coords'].detach().cpu().numpy()
+    kp0, kp1 = data["keypoints0"], data["keypoints1"]
+    depth0 = view0.get("depth")
+    depth1 = view1.get("depth")
+    camera0, camera1 = view0["camera"], view1["camera"]
 
-    i_bottom_right = torch.ceil(i).long()
-    j_bottom_right = torch.ceil(j).long()
-    valid_bottom_right = torch.min(i_bottom_right < h, j_bottom_right < w)
-
-    valid_corners = torch.min(
-        torch.min(valid_top_left, valid_top_right),
-        torch.min(valid_bottom_left, valid_bottom_right)
+    m0 = data["matches0"]
+    kpts0_gt, kpts0_1_gt = get_kpts_projection(view0['patches_coords'], depth0, depth1, camera0, camera1, data["T_0to1"])
+    kpts1_gt, kpts1_0_gt = get_kpts_projection(view1['patches_coords'], depth1, depth0, camera1, camera0, data["T_1to0"])
+    
+    valid = (m0[0] > -1)
+    kpm0, kpm1 = kp0[0][valid].numpy(), kp1[0][m0[0][valid]].numpy()
+    images.append(
+        [view0["image"][0].permute(1, 2, 0), view1["image"][0].permute(1, 2, 0)]
     )
+    kpts.append([kp0[0], kp1[0]])
+    matches.append((kpm0, kpm1))
 
-    i_top_left = i_top_left[valid_corners]
-    j_top_left = j_top_left[valid_corners]
+    correct = m0[0][valid]
 
-    i_top_right = i_top_right[valid_corners]
-    j_top_right = j_top_right[valid_corners]
-
-    i_bottom_left = i_bottom_left[valid_corners]
-    j_bottom_left = j_bottom_left[valid_corners]
-
-    i_bottom_right = i_bottom_right[valid_corners]
-    j_bottom_right = j_bottom_right[valid_corners]
-
-    ids = ids[valid_corners]
-
-    # Valid depth
-    valid_depth = torch.min(
-        torch.min(
-            depth[i_top_left, j_top_left] > 0,
-            depth[i_top_right, j_top_right] > 0
-        ),
-        torch.min(
-            depth[i_bottom_left, j_bottom_left] > 0,
-            depth[i_bottom_right, j_bottom_right] > 0
+    if "heatmap0" in data.keys():
+        heatmaps.append(
+            [
+                torch.sigmoid(data["heatmap0"][i, 0]),
+                torch.sigmoid(data["heatmap1"][i, 0]),
+            ]
         )
-    )
+    elif "depth" in view0.keys() and view0["depth"] is not None:
+        heatmaps.append([view0["depth"][0], view1["depth"][0]])
 
-    i_top_left = i_top_left[valid_depth]
-    j_top_left = j_top_left[valid_depth]
+    mcolors.append(cm_RdGn(correct).tolist())
 
-    i_top_right = i_top_right[valid_depth]
-    j_top_right = j_top_right[valid_depth]
-
-    i_bottom_left = i_bottom_left[valid_depth]
-    j_bottom_left = j_bottom_left[valid_depth]
-
-    i_bottom_right = i_bottom_right[valid_depth]
-    j_bottom_right = j_bottom_right[valid_depth]
-
-    ids = ids[valid_depth]
-
-    # Interpolation
-    i = i[ids]
-    j = j[ids]
-    dist_i_top_left = i - i_top_left.float()
-    dist_j_top_left = j - j_top_left.float()
-    w_top_left = (1 - dist_i_top_left) * (1 - dist_j_top_left)
-    w_top_right = (1 - dist_i_top_left) * dist_j_top_left
-    w_bottom_left = dist_i_top_left * (1 - dist_j_top_left)
-    w_bottom_right = dist_i_top_left * dist_j_top_left
+    img_patches0 = draw_patches(view0["image"][0].permute(1, 2, 0)*255, kpts0_gt[0], color=(0,255,0), patch_size=16)
+    img_patches1 = draw_patches(view1["image"][0].permute(1, 2, 0)*255, kpts1_gt[0], color=(0,255,0), patch_size=16)
     
-    interpolated_depth = (
-        w_top_left * depth[i_top_left, j_top_left] +
-        w_top_right * depth[i_top_right, j_top_right] +
-        w_bottom_left * depth[i_bottom_left, j_bottom_left] +
-        w_bottom_right * depth[i_bottom_right, j_bottom_right]
-    )
+    img_patches0 = draw_patches(img_patches0, data['photo_loss']['kpts1_0'][0].detach().numpy(), color=(255,0,0), patch_size=16)
+    img_patches1 = draw_patches(img_patches1, data['photo_loss']['kpts0_1'][0].detach().numpy(), color=(255,0,0), patch_size=16)
 
-    pos = torch.cat([j.view(1, -1), i.view(1, -1)], dim=0)
-
-    return [interpolated_depth, pos, ids]
-
-
-def preprocess_image(image, preprocessing=None):
-    image = image.astype(np.float32)
-    image = np.moveaxis(image, -1, 0)
-    #image = np.expand_dims(image, 0)
-    if preprocessing == 'caffe':
-        # RGB -> BGR
-        image = image[:: -1, :, :]
-        # Zero-center by mean pixel
-        mean = np.array([103.939, 116.779, 123.68])
-        image = image - mean.reshape([3, 1, 1])
-    else:
+    img_patches0 = draw_patches(img_patches0, kpts1_0_gt[0].detach().numpy(), color=(0,0,255))
+    img_patches1 = draw_patches(img_patches1, kpts0_1_gt[0].detach().numpy(), color=(0,0,255), patch_size=16)
+    try:
+        img_patches0 = cv2.putText(img_patches0, 'Green: Exctracted', (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1, cv2.LINE_AA)
+        img_patches0 = cv2.putText(img_patches0, 'Red: Predicted Projection', (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0), 1, cv2.LINE_AA)
+        img_patches0 = cv2.putText(img_patches0, 'Blue: Ground Truth Projection', (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1, cv2.LINE_AA)
+    except:
         pass
-    return image
+    images_projs.append([img_patches0, img_patches1])
+        
 
+    fig_matches, axes = plot_image_grid(images, return_fig=True, set_lim=True, dpi=figs_dpi)
+    if len(heatmaps) > 0:
+       plot_heatmaps(heatmaps[0], axes=axes[0], a=1.0)
+    plot_keypoints(kpts[0], axes=axes[0], colors="royalblue")
+    plot_matches(*matches[0], color=mcolors[0], axes=axes[0], a=0.5, lw=1.0, ps=0.0)
 
-def draw_matches(img0, img1, kpts0, kpts1, matches, scores, margin=10, channels_first=True, draw_kpts=False):
-    valid = matches > -1
-    mkpts0 = kpts0[valid]
-    mkpts1 = kpts1[matches[valid]]
-    mconf = scores[valid]
-    color = cm.jet(mconf)
-    if(channels_first):
-        C0, H0, W0 = img0.shape
-        C1, H1, W1 = img1.shape
+    fig_projs, axes = plot_image_grid(images_projs, return_fig=True, set_lim=True, dpi=figs_dpi)   
+
+    patches0 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches0'][0] if not torch.any(p < 0)]
+    patches1_0 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches1_0'][0] if not torch.any(p < 0)]
+    patches1 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches1'][0] if not torch.any(p < 0)]
+    patches0_1 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches0_1'][0] if not torch.any(p < 0)]
+    
+    if(len(patches0) > 10 and len(patches1_0) > 10 and len(patches1) > 10 and len(patches0_1) > 10):
+        fig_patches, axes = plot_image_grid([patches0[:10], patches1_0[:10], patches1[:10], patches0_1[:10]], return_fig=True, set_lim=True)
     else:
-        H0, W0, C0 = img0.shape
-        H1, W1, C1 = img1.shape
+        fig_patches = None    
+    origin = torch.tensor([0, 0, 0, 0, 0, 0])
+    fig_cameras = draw_camera_poses([origin, data['gt_vo'][0], data['pred_vo'][0].detach()], 
+                                    ['cam0', 'gt_cam1', 'pred_cam1'],
+                                    dpi=figs_dpi)
+    return {"matches": fig_matches, "projs": fig_projs, "patches": fig_patches, "cameras": fig_cameras}
 
-    C, H, W = max(C0, C1), max(H0, H1), W0 + W1 + margin
 
-    if(channels_first):
-        out = np.ones((C, H, W))
-        out[:, :H0, :W0] = img0
-        out[:, :H1, W0+margin:] = img1
-        out = np.swapaxes(out, 0, 2)
+def draw_camera_poses(poses, labels, dpi=100):
+    n_plots = 2
+    fig, axs = plt.subplots(n_plots, 1, figsize=(6, 6), dpi=dpi)
+    
+    for (pose, label) in zip(poses, labels):
+        # Extracting translation and rotation components
+        xy = pose[:2]
+        xz = [pose[0], pose[2]]
+        rotation = R.from_euler('xyz', pose[3:]).as_matrix() 
+
+        # Plot 1 shows XY plane
+        axs[0].quiver(*xy, rotation[0, 0], rotation[1, 0], headaxislength=0, headwidth=0, headlength=0, color='r', label='X axis')
+        axs[0].quiver(*xy, rotation[0, 1], rotation[1, 1], headaxislength=0, headwidth=0, headlength=0, color='g', label='Y axis')
+        axs[0].text(xy[0], xy[1], label, fontsize=12, color='black')
+        axs[0].set_xlabel('X')
+        axs[0].set_ylabel('Y')
+
+        # Plot 2 shows XZ plane
+        axs[1].quiver(*xz, rotation[0, 0], rotation[2, 0], headaxislength=0, headwidth=0, headlength=0, color='r', label='X axis')
+        axs[1].quiver(*xz, rotation[0, 2], rotation[2, 2], headaxislength=0, headwidth=0, headlength=0, color='b', label='Z axis')
+        axs[1].text(xz[0], xz[1], label, fontsize=12, color='black')
+        axs[1].set_xlabel('X')
+        axs[1].set_ylabel('Z')
+
+    for i in range(n_plots):
+        axs[i].grid(True)
+        axs[i].set_xlim([-1, 1])
+        axs[i].set_ylim([-1, 1])
+    
+    return fig
+
+def get_kpts_projection(kpts, depth0, depth1, camera0, camera1, T_0to1):
+    d, valid = sample_depth(kpts, depth0)
+
+    kpts_1, visible = project(
+        kpts, d, depth1, camera0, camera1, T_0to1, valid
+    )
+    #kpts = kpts * valid.unsqueeze(-1)
+    kpts_visible = kpts * visible.unsqueeze(-1)
+    kpts_1 = kpts_1 * visible.unsqueeze(-1)
+    kpts_visible[~visible] = float('nan')
+    kpts_1[~visible] = float('nan')
+    return kpts_visible, kpts_1
+
+    
+def draw_patches(img, kpts, color=(0,0,255), patch_size=16):
+    """Draw patches around keypoints on an image"""
+    if isinstance(img, torch.Tensor):
+        img = img.cpu().numpy()
+    half = patch_size // 2
+    for pt in kpts:
+        if np.isnan(pt[0]) or np.isnan(pt[1]):
+            continue
+        img = cv2.rectangle(
+            np.ascontiguousarray(img).astype(np.uint8),
+            (int(pt[0]) - half, int(pt[1]) - half),
+            (int(pt[0]) + half, int(pt[1]) + half),
+            color,
+            2,
+        )
+    return img
+
+
+def draw_pts(img, pts, color=(0, 0, 255), radius=5):
+    """Draw points on an image"""
+    for pt in pts:
+        #check if pt is nan
+        if np.isnan(pt[0]) or np.isnan(pt[1]):
+            continue
+        img = cv2.circle(np.ascontiguousarray(img).astype(np.uint8), (int(pt[0]), int(pt[1])), radius, color, 2)
+    return img
+
+def draw_matches(image0, image1, kpts0, kpts1, scores=None):
+    H0, W0 = image0.shape[0], image0.shape[1]
+    H1, W1 = image1.shape[0], image1.shape[1]
+
+    H, W = max(H0, H1), W0 + W1
+    out = 255 * np.ones((H, W, 3), np.uint8)
+    out[:H0, :W0, :] = image0
+    out[:H1, W0:, :] = image1
+
+    kpts0, kpts1 = np.round(kpts0).astype(int), np.round(kpts1).astype(int)
+
+    # get color
+    if scores is not None:
+        smin, smax = scores.min(), scores.max()
+        assert (0 <= smin <= 1 and 0 <= smax <= 1)
+
+        color = cm.gist_rainbow(scores * 0.4)
+        color = (np.array(color[:, :3]) * 255).astype(int)[:, ::-1]
     else:
-        out = np.ones((H, W, C))
-        out[:H0, :W0, :] = img0
-        out[:H1, W0+margin:, :] = img1
-       
-    #out = np.stack([out]*3, -1)
+        color = np.zeros((kpts0.shape[0], 3), dtype=int)
 
-    mkpts0, mkpts1 = np.round(mkpts0).astype(int), np.round(mkpts1).astype(int)
-
-    color = (np.array(color[:, :3])).astype(int)[:, ::-1]
-    for (x0, y0), (x1, y1), c in zip(mkpts0, mkpts1, color):
+    for (x0, y0), (x1, y1), c in zip(kpts0, kpts1, color):
         c = c.tolist()
-        cv2.line(out, (x0, y0), (x1 + margin + W0, y1),
-                 color=c, thickness=1, lineType=cv2.LINE_AA)
-        if(draw_kpts):
-            cv2.circle(out, (x0, y0), 2, color=(0,0,0), thickness=-1)
-            cv2.circle(out, (x1 + margin + W0, y1), 2, color=(0,0,0), thickness=-1)
+        cv2.line(out, (x0, y0), (x1 + W0, y1), color=c, thickness=1, lineType=cv2.LINE_AA)
     return out
 
 
-def scores_to_matches(scores, threshold=0.5):
-    max0, max1 = scores[:, :-1, :-1].max(2), scores[:, :-1, :-1].max(1)
-    indices0, indices1 = max0.indices, max1.indices
-    mutual0 = arange_like(indices0, 1)[None] == indices1.gather(1, indices0)
-    zero = scores.new_tensor(0)
-    mscores0 = torch.where(mutual0, max0.values.exp(), zero)
-    valid0 = mutual0 & (mscores0 > threshold)
-    indices0 = torch.where(valid0, indices0, indices0.new_tensor(-1))
-    
-    return indices0, mscores0
-
-
-def pad_data(data, max_kpts, img_shape, device):
-    _, _, width, _ = img_shape
-
-    for k in data:
-        if isinstance(data[k], (list, tuple)):
-            new_data = []
-            if(k.startswith('keypoints')):
-                #padding keypoints
-                for kpt in data[k]:
-                    #random_values = torch.Tensor(max_kpts - kpt.shape[0], 2).uniform_(0, width)
-                    random_values = torch.randint(0, width, (max_kpts - kpt.shape[0], 2))
-                    new_data += [torch.cat((kpt, random_values.to(device)), 0)]
-                    
-            if(k.startswith('descriptor')):
-                #padding descriptors
-                for desc in data[k]:
-                    new_data += [F.pad(desc, 
-                                (0, max_kpts - desc.shape[1]))]
-
-            if(k.startswith('score')):
-                #padding scores
-                for score in data[k]:
-                    new_data += [F.pad(score, 
-                                (0, max_kpts - score.shape[0]))]
-            data[k] = torch.stack(new_data)
-    return data
-    
-
-def replace_ignored(data, ignore, img_shape, device):
-    _, _, width, _ = img_shape
-
-    for img_id in ['0', '1']:
-        for k in data:
-            batch_size = data[k].size(0)
-            if(k.startswith('keypoints'+img_id)):
-                for i in range(batch_size):
-                    for id in ignore['ignored'+img_id][i]:
-                        new_row = torch.randint(0, width, (1, 2))
-                        data[k][i][id] = new_row
-            if(k.startswith('score'+img_id)):
-                for i in range(batch_size):        
-                    for id in ignore['ignored'+img_id][i]:
-                        data[k][i][id] = 0
-    return data
-
-
-def arange_like(x, dim: int):
-    return x.new_ones(x.shape[dim]).cumsum(0) - 1  # traceable in 1.1
-
-
-def min_row_col(tensor):
-    i = 0
-    smallest, min_i, min_j = None, None, None
-    for row in tensor:
-        min_value = torch.min(row)
-        if(smallest == None or min_value < smallest):
-            smallest = min_value
-            min_i = i
-            min_j = torch.argmin(row).item()
-        i += 1
-
-    return min_i, min_j
-
-
-def draw_patches(img, patches_corners, color=(0,0,0), thickness=2):
-    for corner in patches_corners:
-        img = cv2.rectangle(img, (int(corner[0][0]), int(corner[0][1])), 
-                                 (int(corner[1][0]), int(corner[1][1])), color, thickness)
-    return img
-
-def draw_pts(img, pts, color=(255, 255, 255), radius=0, thickness=-1):
-    for pt in pts:
-        if(pt[0] > 0 and pt[1] > 0):
-            img = cv2.circle(img, (int(pt[0]), int(pt[1])), radius=radius, color=color, thickness=thickness)
-    return img
-
-
-def patch_meshgrid(x_min, x_max, y_min, y_max):
-    xs = torch.range(x_min, x_max-1, step=1)
-    ys = torch.range(y_min, y_max-1, step=1)
-    gx, gy = torch.meshgrid(xs, ys)
-    grid = torch.cat((torch.unsqueeze(gx, dim=2), torch.unsqueeze(gy, dim=2)), dim=2)
-    return grid
-
-
-def get_only_balanced(data, gt, max_kpts):
-    new_data = defaultdict(lambda: None)
-    new_gt = None
-    for i in range(gt.size(0)):
-        valid_ids = (gt[i] != -1).nonzero(as_tuple=True)
-        filtered_target = gt[i][valid_ids]
-        pos_ids = (filtered_target < max_kpts).nonzero(as_tuple=True)
-        neg_ids = (filtered_target == max_kpts).nonzero(as_tuple=True) 
-        total_size = len(pos_ids[0])+len(neg_ids[0])
-        
-        if(len(pos_ids[0])/total_size > 0.5):
-            if(new_gt == None):
-                new_gt = torch.unsqueeze(gt[i], dim=0)
-            else:
-                new_gt = torch.cat((new_gt, torch.unsqueeze(gt[i], dim=0)), dim=0)
-            
-            for k in data:
-                if(new_data[k] == None):
-                    new_data[k] = torch.unsqueeze(data[k][i], dim=0)
-                else:
-                    new_data[k] = torch.cat((new_data[k], torch.unsqueeze(data[k][i], dim=0)), dim=0)
-    return new_data, new_gt
-
-
-def fill_dustbins(matches):
-    rows = torch.count_nonzero(matches, dim=1)
-    cols = torch.count_nonzero(matches, dim=0)
-    dust_col = rows.clone()
-    dust_row = cols.clone()
-    dust_col[rows == 0] = 1
-    dust_col[rows != 0] = 0
-    dust_row[cols == 0] = 1
-    dust_row[cols != 0] = 0
-    matches[:,-1] = dust_col
-    matches[-1,:] = dust_row
-    return matches
-
-
-def ohe_to_le(ohe_tensor):
-    '''
-        Function to convert one hot encoding to label encoding. Notice that if all elements in a row/cols are zero, the keypoint has no match, 
-        thus its label is assigned to n_rows/n_cols. MOreover, if the keypoint is ignored its label is assigned to -1
-    '''
-    le_tensor = torch.full((ohe_tensor.size(0), ohe_tensor.size(-1)), ohe_tensor.size(-1))
-    match_ids = (ohe_tensor == 1).nonzero(as_tuple=True)
-    ignored_ids = (ohe_tensor == -1).nonzero(as_tuple=True)    
-    le_tensor[match_ids[:2]] = match_ids[2]
-    le_tensor[ignored_ids[:2]] = -1
-    
-    return le_tensor
-
-
-def get_kpts_depths(kpts_batch, depth_batch, device):
-    keypoint_depth_batch = torch.full((kpts_batch.size(0), kpts_batch.size(1)), 
-                                        -1, device=device).float()
-    for idx_in_batch in range(len(kpts_batch)):
-        kpts = kpts_batch[idx_in_batch].to(device)
-        kpts = torch.transpose(kpts, 0, 1)
-        depths, _, ids = interpolate_depth(kpts, depth_batch[idx_in_batch].to(device))
-        keypoint_depth_batch[idx_in_batch, ids] = depths/torch.max(depths)
-    return keypoint_depth_batch
-
-
-def save_model(path, model, optimizer, step, epoch, loss):
-    torch.save({'epoch': epoch,
-                'step': step,
-                'kenc': model.kenc.state_dict(),
-                'gnn': model.gnn.state_dict(),
-                'final_proj': model.final_proj.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'loss': loss}, 
-                path)
-    print(f'Model {path} saved!')
-
-
-def load_model_weights(model, path, recover_state=False, modules=['gnn', 'final_proj']):
-    print('Loading model ', path)
-    ckpt = torch.load(str(path))
-    if(modules):
-        if('kenc' in modules):
-            model.kenc.load_state_dict(ckpt['kenc'])
-        if('gnn' in modules):
-            model.gnn.load_state_dict(ckpt['gnn'])
-        if('final_proj' in modules):
-            model.final_proj.load_state_dict(ckpt['final_proj'])
-    else:
-        model.load_state_dict(ckpt)
-    if(recover_state):
-        return model, ckpt['epoch'], ckpt['step'], ckpt['optimizer'], ckpt['loss']
-    return model
+def get_patches(img, pts, patch_size=16):
+    """Given an image and a set of points, return the patches around the points"""
+    device = img.device
+    batch_size = img.size(0)
+    patch_size = int(patch_size)
+    half = patch_size // 2
+    patches = []
+    for i in range(batch_size):
+        #pad image
+        img_pad = torch.nn.functional.pad(img[i], (half, half, half, half), mode='reflect')
+        pts_i = pts[i]
+        patches_i = []
+        for j in range(pts_i.size(0)):
+            if torch.isnan(pts_i[j]).any():
+                #append nan tensor
+                patches_i.append(torch.full((3, patch_size, patch_size), float('nan')).to(device))
+                continue
+            x, y = pts_i[j].int()            
+            patch = img_pad[..., y:y+patch_size, x:x+patch_size]
+            patches_i.append(patch)
+        patches.append(torch.stack(patches_i))    
+    return torch.stack(patches)
 
 
 def _axis_angle_rotation(axis: str, angle: torch.Tensor) -> torch.Tensor:
