@@ -70,7 +70,7 @@ def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, d
             if torch.isnan(loss['total']).any():
                 print(f"Detected NAN, skipping iteration {it}")
                 continue
-            loss['total'].backward()
+            loss['total'].mean().backward()
             optimizer.step()
 
             if(debug):
@@ -78,7 +78,7 @@ def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, d
                 plt.show()
 
             if(it % config.train.log_every_iter == 0):
-                logger.info(f"[Train] Epoch {epoch} Iteration {it} Loss: {loss['total'].item()}")
+                logger.info(f"[Train] Epoch {epoch} Iteration {it} Loss: {loss['total'].mean()}")
                 for k, v in loss.items():
                     writer.add_scalar("train/loss/" + k, v, tot_n_samples)
                 figs = debug_batch(output, figs_dpi=700)
@@ -92,7 +92,7 @@ def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, d
                 model.eval()
                 loss, figs = do_evaluation(val_loader, model, device)
                 if(loss):
-                    logger.info(f"[Val] Epoch: {epoch} Iteration: {it} Loss: {loss['total'].item()}")
+                    logger.info(f"[Val] Epoch: {epoch} Iteration: {it} Loss: {loss['total'].mean()}")
 
                     for k, v in loss.items():
                         writer.add_scalar("val/loss/" + k, v, tot_n_samples)                    
@@ -101,8 +101,8 @@ def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, d
                             writer.add_figure("val/fig/" + k, v, tot_n_samples)
                     writer.add_scalar("val/epoch", epoch, tot_n_samples)
 
-                    if(loss['total'].item() < config.train.best_loss):
-                        best_loss = loss['total'].item()
+                    if(loss['total'].mean() < config.train.best_loss):
+                        best_loss = loss['total'].mean()
                         config.train.best_loss = best_loss
                         logger.info(f"Found best model with loss {best_loss}. Saving checkpoint.")
                         torch.save({
