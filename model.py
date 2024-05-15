@@ -62,7 +62,7 @@ class ImagePairEncoder(nn.Module):
         block_type = models.resnet.BasicBlock
         layers = [2, 2, 2, 2]
         self.encoder = ResNetMultiImageInput(block_type, layers, config, num_input_images=2)
-        resnet18 = model_zoo.load_url(models.resnet.model_urls['resnet18'])
+        resnet18 = model_zoo.load_url(models.resnet.ResNet18_Weights.IMAGENET1K_V1.url)
         resnet18['conv1.weight'] = torch.cat([resnet18['conv1.weight']] * 2, 1)/2
         self.encoder.load_state_dict(resnet18)
     
