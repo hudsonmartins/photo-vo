@@ -5,9 +5,9 @@ data:
         resize: 1024
         side: long
         square_pad: True
-    train_split: train_scenes.txt
+    train_split: train_scenes_clean.txt
     train_num_per_scene: 300
-    val_split: valid_scenes.txt
+    val_split: valid_scenes_clean.txt
     val_pairs: valid_pairs.txt
     min_overlap: 0.1
     max_overlap: 1.0
