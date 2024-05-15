@@ -130,7 +130,7 @@ class PhotoVoModel(nn.Module):
                 if m[1] > -1:
                     valid_matches.append([m[0], m[1]])
             b_valid_matches.append(valid_matches)
-
+        
         # Extracting matches for m0 and m1
         m0 = [m[0].long() for matches in b_valid_matches for m in matches]
         m1 = [m[1].long() for matches in b_valid_matches for m in matches]
@@ -140,11 +140,19 @@ class PhotoVoModel(nn.Module):
         kpts1_valid = kpts1[:,m1,:]
         scores0_valid = self.features['matching_scores0'][:,m0]
         scores1_valid = self.features['matching_scores1'][:,m1]
-        
+        if(kpts0_valid.size(1) > kpts0.size(1) or kpts1_valid.size(1) > kpts1.size(1)):
+            data['pred_vo'] = torch.full((kpts0.size(0), 6), float('nan'), dtype=kpts0.dtype, device=kpts0.device)
+            data['view0']['patches_coords'] = torch.full((kpts0.size(0), kpts0.size(1), kpts0.size(2)), float('nan'), dtype=kpts0.dtype, device=kpts0.device)
+            data['view1']['patches_coords'] = torch.full((kpts1.size(0), kpts1.size(1), kpts1.size(2)), float('nan'), dtype=kpts1.dtype, device=kpts1.device)
+            data['view0']['patches'] = torch.full((kpts0.size(0), kpts0.size(1), 3, self.config.photo_vo.model.patch_size, self.config.photo_vo.model.patch_size), float('nan'), dtype=kpts0.dtype, device=kpts0.device)
+            data['view1']['patches'] = torch.full((kpts1.size(0), kpts1.size(1), 3, self.config.photo_vo.model.patch_size, self.config.photo_vo.model.patch_size), float('nan'), dtype=kpts1.dtype, device=kpts1.device)
+            return {**data, **self.features}
+           
         # Fill the invalid kpts with nan
         kpts0 = torch.cat([kpts0_valid, torch.full((kpts0_valid.size(0), kpts0.size(1)-kpts0_valid.size(1), kpts0_valid.size(2)), float('nan'), dtype=kpts0_valid.dtype, device=kpts0_valid.device)], dim=1)
         kpts1 = torch.cat([kpts1_valid, torch.full((kpts1_valid.size(0), kpts1.size(1)-kpts1_valid.size(1), kpts1_valid.size(2)), float('nan'), dtype=kpts1_valid.dtype, device=kpts1_valid.device)], dim=1)
         
+
         # Extract patches
         #check device of all tensors
         patches0 = get_patches(data['view0']['image'], kpts0, self.config.photo_vo.model.patch_size)
