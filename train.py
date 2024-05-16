@@ -7,9 +7,9 @@ import random
 import logging
 import matplotlib.pyplot as plt
 from omegaconf import OmegaConf
+from tqdm import tqdm
 from gluefactory.datasets import get_dataset
 from gluefactory.utils.tensor import batch_to_device
-
 from torch.utils.tensorboard import SummaryWriter
 
 from utils import debug_batch
@@ -40,13 +40,13 @@ default_train_conf = OmegaConf.create(default_train_conf)
 
 def do_evaluation(val_loader, model, device):
     avg_losses = None
-    for it, data in enumerate(val_loader):
+    for it, data in enumerate(tqdm(val_loader)):
         data = batch_to_device(data, device, non_blocking=True)
         with torch.no_grad():
             output = model(data)
             loss, output = model.loss(output)
             if torch.isnan(loss['total']).any():
-                print(f"Detected NAN, skipping iteration {it}")
+                logger.info(f"Detected NAN, skipping iteration {it}")
                 continue
             avg_losses = {k: v + loss[k].mean() for k, v in loss.items()}
     if(avg_losses is None):
@@ -59,8 +59,8 @@ def do_evaluation(val_loader, model, device):
 def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, debug=False):
     writer = SummaryWriter(log_dir=config.train.tensorboard_dir)
     while(epoch < config.train.epochs):
-        for it, data in enumerate(train_loader):
-            logger.info(f"Starting Iteration {it} in epoch {epoch}")
+        for it, data in enumerate(tqdm(train_loader)):
+            #logger.info(f"Starting Iteration {it} in epoch {epoch}")
             tot_n_samples = (len(train_loader) * epoch + it)
             model.train()
             optimizer.zero_grad()
@@ -68,7 +68,7 @@ def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, d
             output = model(data)
             loss, output = model.loss(output)
             if torch.isnan(loss['total']).any():
-                print(f"Detected NAN, skipping iteration {it}")
+                logger.info(f"Detected NAN, skipping iteration {it}")
                 continue
             loss['total'].mean().backward()
             optimizer.step()
@@ -90,6 +90,7 @@ def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, d
             #validation
             if(config.train.eval_every_iter > 0 and it % config.train.eval_every_iter == 0 or it == (len(train_loader) - 1)):                
                 model.eval()
+                logger.info(f"Starting validation at epoch {epoch} iteration {it}")
                 loss, figs = do_evaluation(val_loader, model, device)
                 if(loss):
                     logger.info(f"[Val] Epoch: {epoch} Iteration: {it} Loss: {loss['total'].mean()}")
@@ -102,7 +103,7 @@ def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, d
                     writer.add_scalar("val/epoch", epoch, tot_n_samples)
 
                     if(loss['total'].mean() < config.train.best_loss):
-                        best_loss = loss['total'].mean()
+                        best_loss = loss['total'].mean().item()
                         config.train.best_loss = best_loss
                         logger.info(f"Found best model with loss {best_loss}. Saving checkpoint.")
                         torch.save({
