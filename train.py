@@ -51,7 +51,7 @@ def do_evaluation(val_loader, model, device):
             avg_losses = {k: v + loss[k].mean() for k, v in loss.items()}
     if(avg_losses is None):
         return None, None
-    avg_losses = {k: v / len(val_loader) for k, v in avg_losses.items()}
+    avg_losses = {k: v.mean() for k, v in avg_losses.items()}
     figs = debug_batch(output, figs_dpi=700)
     return avg_losses, figs
 
@@ -94,7 +94,6 @@ def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, d
                 loss, figs = do_evaluation(val_loader, model, device)
                 if(loss):
                     logger.info(f"[Val] Epoch: {epoch} Iteration: {it} Loss: {loss['total'].mean()}")
-
                     for k, v in loss.items():
                         writer.add_scalar("val/loss/" + k, v.mean(), tot_n_samples)                    
                     for k, v in figs.items():
@@ -102,7 +101,7 @@ def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, d
                             writer.add_figure("val/fig/" + k, v, tot_n_samples)
                     writer.add_scalar("val/epoch", epoch, tot_n_samples)
 
-                    if(loss['total'].mean() < config.train.best_loss):
+                    if(loss['total'].mean().item() < config.train.best_loss):
                         best_loss = loss['total'].mean().item()
                         config.train.best_loss = best_loss
                         logger.info(f"Found best model with loss {best_loss}. Saving checkpoint.")
