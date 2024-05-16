@@ -172,7 +172,6 @@ def get_kpts_projection(kpts, depth0, depth1, camera0, camera1, T_0to1):
     kpts_1[~visible] = float('nan')
     return kpts_visible, kpts_1
 
-    
 def draw_patches(img, kpts, color=(0,0,255), patch_size=16):
     """Draw patches around keypoints on an image"""
     if isinstance(img, torch.Tensor):
@@ -189,7 +188,6 @@ def draw_patches(img, kpts, color=(0,0,255), patch_size=16):
             2,
         )
     return img
-
 
 def draw_pts(img, pts, color=(0, 0, 255), radius=5):
     """Draw points on an image"""
@@ -226,7 +224,6 @@ def draw_matches(image0, image1, kpts0, kpts1, scores=None):
         cv2.line(out, (x0, y0), (x1 + W0, y1), color=c, thickness=1, lineType=cv2.LINE_AA)
     return out
 
-
 def get_patches(img, pts, patch_size=16):
     """Given an image and a set of points, return the patches around the points"""
     device = img.device
@@ -249,7 +246,6 @@ def get_patches(img, pts, patch_size=16):
             patches_i.append(patch)
         patches.append(torch.stack(patches_i))    
     return torch.stack(patches)
-
 
 def _axis_angle_rotation(axis: str, angle: torch.Tensor) -> torch.Tensor:
     """
@@ -281,7 +277,6 @@ def _axis_angle_rotation(axis: str, angle: torch.Tensor) -> torch.Tensor:
 
     return torch.stack(R_flat, -1).reshape(angle.shape + (3, 3))
 
-
 def euler_angles_to_matrix(euler_angles: torch.Tensor, convention: str) -> torch.Tensor:
     """
     Extracted from https://github.com/facebookresearch/pytorch3d
@@ -310,7 +305,6 @@ def euler_angles_to_matrix(euler_angles: torch.Tensor, convention: str) -> torch
     ]
     # return functools.reduce(torch.matmul, matrices)
     return torch.matmul(torch.matmul(matrices[0], matrices[1]), matrices[2])
-
 
 def _angle_from_tan(
     axis: str, other_axis: str, data, horizontal: bool, tait_bryan: bool
@@ -345,7 +339,6 @@ def _angle_from_tan(
         return torch.atan2(-data[..., i2], data[..., i1])
     return torch.atan2(data[..., i2], -data[..., i1])
 
-
 def _index_from_letter(letter: str) -> int:
     """
     Extracted from https://github.com/facebookresearch/pytorch3d
@@ -357,7 +350,6 @@ def _index_from_letter(letter: str) -> int:
     if letter == "Z":
         return 2
     raise ValueError("letter must be either X, Y or Z.")
-
 
 def matrix_to_euler_angles(matrix: torch.Tensor, convention: str) -> torch.Tensor:
     """
