@@ -80,7 +80,7 @@ def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, d
             if(it % config.train.log_every_iter == 0):
                 logger.info(f"[Train] Epoch {epoch} Iteration {it} Loss: {loss['total'].mean()}")
                 for k, v in loss.items():
-                    writer.add_scalar("train/loss/" + k, v, tot_n_samples)
+                    writer.add_scalar("train/loss/" + k, v.mean(), tot_n_samples)
                 figs = debug_batch(output, figs_dpi=700)
                 for k, v in figs.items():
                     if(v):
@@ -95,7 +95,7 @@ def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, d
                     logger.info(f"[Val] Epoch: {epoch} Iteration: {it} Loss: {loss['total'].mean()}")
 
                     for k, v in loss.items():
-                        writer.add_scalar("val/loss/" + k, v, tot_n_samples)                    
+                        writer.add_scalar("val/loss/" + k, v.mean(), tot_n_samples)                    
                     for k, v in figs.items():
                         if(v):
                             writer.add_figure("val/fig/" + k, v, tot_n_samples)
