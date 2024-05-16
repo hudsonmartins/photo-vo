@@ -140,6 +140,7 @@ class PhotoVoModel(nn.Module):
         kpts1_valid = kpts1[:,m1,:]
         scores0_valid = self.features['matching_scores0'][:,m0]
         scores1_valid = self.features['matching_scores1'][:,m1]
+
         if(kpts0_valid.size(1) > kpts0.size(1) or kpts1_valid.size(1) > kpts1.size(1)):
             data['pred_vo'] = torch.full((kpts0.size(0), 6), float('nan'), dtype=kpts0.dtype, device=kpts0.device)
             data['view0']['patches_coords'] = torch.full((kpts0.size(0), kpts0.size(1), kpts0.size(2)), float('nan'), dtype=kpts0.dtype, device=kpts0.device)
@@ -151,7 +152,6 @@ class PhotoVoModel(nn.Module):
         # Fill the invalid kpts with nan
         kpts0 = torch.cat([kpts0_valid, torch.full((kpts0_valid.size(0), kpts0.size(1)-kpts0_valid.size(1), kpts0_valid.size(2)), float('nan'), dtype=kpts0_valid.dtype, device=kpts0_valid.device)], dim=1)
         kpts1 = torch.cat([kpts1_valid, torch.full((kpts1_valid.size(0), kpts1.size(1)-kpts1_valid.size(1), kpts1_valid.size(2)), float('nan'), dtype=kpts1_valid.dtype, device=kpts1_valid.device)], dim=1)
-        
 
         # Extract patches
         #check device of all tensors
