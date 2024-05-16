@@ -48,7 +48,7 @@ def do_evaluation(val_loader, model, device):
             if torch.isnan(loss['total']).any():
                 print(f"Detected NAN, skipping iteration {it}")
                 continue
-            avg_losses = {k: v + loss[k].item() for k, v in loss.items()}
+            avg_losses = {k: v + loss[k].mean() for k, v in loss.items()}
     if(avg_losses is None):
         return None, None
     avg_losses = {k: v / len(val_loader) for k, v in avg_losses.items()}
