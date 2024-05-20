@@ -52,8 +52,8 @@ photo_vo:
       dim_image_emb: 512
       loss_weights:
         photometric: 0.25
-        pose: 0.5
-        match: 0.25
+        pose: 0.75
+        match: 0.0
 train:
     epochs: 50
     save_every_iter: 500
