@@ -15,9 +15,9 @@ data:
     read_depth: true
     read_image: true
     batch_size: 8
-    num_workers: 14
+    num_workers: 1
     load_features:
-        do: false 
+        do: false
         path: exports/megadepth-undist-depth-r1024_pycolmap_SIFTGPU-nms3-fixed-k2048/{scene}.h5
         padding_length: 2048
         padding_fn: pad_local_features
@@ -55,9 +55,9 @@ photo_vo:
         pose: 0.75
         match: 0.0
 train:
-    epochs: 50
-    save_every_iter: 500
-    log_every_iter: 500
-    eval_every_iter: 500
+    epochs: 30
+    save_every_iter: 100
+    log_every_iter: 100
+    eval_every_iter: 100
     lr: 1e-4
-
+    load_experiment: exp1
