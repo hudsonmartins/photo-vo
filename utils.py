@@ -1,6 +1,7 @@
 import torch
 import cv2
 import numpy as np
+import matplotlib
 import matplotlib.cm as cm
 from torchvision import transforms
 import matplotlib.pyplot as plt
@@ -8,6 +9,7 @@ from scipy.spatial.transform import Rotation as R
 from gluefactory.geometry.depth import sample_depth, project
 from gluefactory.utils.tensor import batch_to_device
 from gluefactory.visualization.viz2d import plot_heatmaps, plot_image_grid, plot_keypoints, plot_matches, cm_RdGn
+matplotlib.use('Agg') 
 
 
 def normalize_image(image):
@@ -154,9 +156,10 @@ def draw_camera_poses(poses, labels, dpi=100):
 
     for i in range(n_plots):
         axs[i].grid(True)
-        axs[i].set_xlim([-1, 1])
-        axs[i].set_ylim([-1, 1])
-    
+        fig.tight_layout(pad=0.5)
+        #axs[i].set_xlim([-1, 1])
+        #axs[i].set_ylim([-1, 1])
+    plt.close()
     return fig
 
 def get_kpts_projection(kpts, depth0, depth1, camera0, camera1, T_0to1):
