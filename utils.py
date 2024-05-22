@@ -157,8 +157,6 @@ def draw_camera_poses(poses, labels, dpi=100):
     for i in range(n_plots):
         axs[i].grid(True)
         fig.tight_layout(pad=0.5)
-        #axs[i].set_xlim([-1, 1])
-        #axs[i].set_ylim([-1, 1])
     plt.close()
     return fig
 
