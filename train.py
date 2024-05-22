@@ -142,7 +142,7 @@ def main(args):
             else:
                 logger.info(f"No checkpoint found in {args.experiment}")
         else:
-            init_cp = torch.load(os.path.join(args.experiment, "best_model.tar"), map_location="cpu")
+            init_cp = torch.load(os.path.join(conf.train.load_experiment, "best_model.tar"), map_location="cpu")
             logger.info(f"Loading model best_model.tar")
             
         if(init_cp is not None):
