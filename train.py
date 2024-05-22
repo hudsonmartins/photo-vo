@@ -133,7 +133,7 @@ def main(args):
     if conf.train.load_experiment:
         if(not args.load_best_model):
             logger.info(f"Trying to restore from previous training of {conf.train.load_experiment}")
-            ckpts = glob.glob(os.path.join(conf.train.load_experiments, "checkpoint_*.tar"))
+            ckpts = glob.glob(os.path.join(conf.train.load_experiment, "checkpoint_*.tar"))
             ckpts = [os.path.basename(ckpt) for ckpt in ckpts]
             if len(ckpts) > 0:
                 init_cp_name = sorted(ckpts)[-1]
