@@ -132,15 +132,15 @@ def main(args):
     init_cp = None
     if conf.train.load_experiment:
         if(not args.load_best_model):
-            logger.info(f"Trying to restore from previous training of {args.experiment}")
-            ckpts = glob.glob(os.path.join(args.experiment, "checkpoint_*.tar"))
+            logger.info(f"Trying to restore from previous training of {conf.train.load_experiment}")
+            ckpts = glob.glob(os.path.join(conf.train.load_experiments, "checkpoint_*.tar"))
             ckpts = [os.path.basename(ckpt) for ckpt in ckpts]
             if len(ckpts) > 0:
                 init_cp_name = sorted(ckpts)[-1]
-                init_cp = torch.load(os.path.join(args.experiment, init_cp_name), map_location="cpu")
+                init_cp = torch.load(os.path.join(conf.train.load_experiment, init_cp_name), map_location="cpu")
                 logger.info(f"Will load model {init_cp_name}")
             else:
-                logger.info(f"No checkpoint found in {args.experiment}")
+                logger.info(f"No checkpoint found in {conf.train.load_experiment}")
         else:
             init_cp = torch.load(os.path.join(conf.train.load_experiment, "best_model.tar"), map_location="cpu")
             logger.info(f"Loading model best_model.tar")
