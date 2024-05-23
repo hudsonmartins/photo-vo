@@ -38,8 +38,9 @@ default_train_conf = {
 default_train_conf = OmegaConf.create(default_train_conf)
 
 
-def do_evaluation(val_loader, model, device):
+def do_evaluation(val_loader, model, device, n_images=5):
     avg_losses = None
+    all_figs = {}
     for it, data in enumerate(tqdm(val_loader)):
         data = batch_to_device(data, device, non_blocking=True)
         with torch.no_grad():
@@ -49,11 +50,14 @@ def do_evaluation(val_loader, model, device):
                 logger.info(f"Detected NAN, skipping iteration {it}")
                 continue
             avg_losses = {k: v + loss[k].mean() for k, v in loss.items()}
+            if(it < n_images):
+                figs = {k+'_'+str(it): v for k, v in debug_batch(output, figs_dpi=700).items()}
+                all_figs = {**all_figs, **figs}
+
     if(avg_losses is None):
         return None, None
     avg_losses = {k: v.mean() for k, v in avg_losses.items()}
-    figs = debug_batch(output, figs_dpi=700)
-    return avg_losses, figs
+    return avg_losses, all_figs
 
 
 def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, debug=False):

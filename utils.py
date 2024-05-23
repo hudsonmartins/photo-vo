@@ -42,7 +42,7 @@ def get_sorted_matches(data):
     return b_mcfs
         
 
-def debug_batch(data, figs_dpi=100):
+def debug_batch(data, figs_dpi=100, i=0):
     '''
     Visualize the first pair in the batch
     '''
@@ -50,7 +50,7 @@ def debug_batch(data, figs_dpi=100):
         data = data["0to1"]
     
     data = batch_to_device(data, "cpu", non_blocking=False)
-    images, kpts, matches, mcolors, images_projs, patches0, patches1 = [], [], [], [], [], [], []
+    images, kpts, matches, images_projs, patches0, patches1 = [], [], [], [], [], []
     heatmaps = []
     view0, view1 = data["view0"], data["view1"]    
 
@@ -58,24 +58,22 @@ def debug_batch(data, figs_dpi=100):
     view1['image'].detach().cpu().numpy()
     view0['patches_coords'].detach().cpu().numpy()
     view1['patches_coords'].detach().cpu().numpy()
-    kp0, kp1 = data["keypoints0"], data["keypoints1"]
+    kp0, kp1 = view0['patches_coords'], view1['patches_coords']
     depth0 = view0.get("depth")
     depth1 = view1.get("depth")
     camera0, camera1 = view0["camera"], view1["camera"]
 
-    m0 = data["matches0"]
+    #m0 = data["matches0"]
     kpts0_gt, kpts0_1_gt = get_kpts_projection(view0['patches_coords'], depth0, depth1, camera0, camera1, data["T_0to1"])
     kpts1_gt, kpts1_0_gt = get_kpts_projection(view1['patches_coords'], depth1, depth0, camera1, camera0, data["T_1to0"])
     
-    valid = (m0[0] > -1)
-    kpm0, kpm1 = kp0[0][valid].numpy(), kp1[0][m0[0][valid]].numpy()
+    #valid = (m0[i] > -1)
+    kpm0, kpm1 = kp0[i].numpy(), kp1[i].numpy()
     images.append(
-        [view0["image"][0].permute(1, 2, 0), view1["image"][0].permute(1, 2, 0)]
+        [view0["image"][i].permute(1, 2, 0), view1["image"][i].permute(1, 2, 0)]
     )
-    kpts.append([kp0[0], kp1[0]])
+    kpts.append([kp0[i], kp1[i]])
     matches.append((kpm0, kpm1))
-
-    correct = m0[0][valid]
 
     if "heatmap0" in data.keys():
         heatmaps.append(
@@ -85,18 +83,16 @@ def debug_batch(data, figs_dpi=100):
             ]
         )
     elif "depth" in view0.keys() and view0["depth"] is not None:
-        heatmaps.append([view0["depth"][0], view1["depth"][0]])
+        heatmaps.append([view0["depth"][i], view1["depth"][i]])
 
-    mcolors.append(cm_RdGn(correct).tolist())
-
-    img_patches0 = draw_patches(view0["image"][0].permute(1, 2, 0)*255, kpts0_gt[0], color=(0,255,0), patch_size=16)
-    img_patches1 = draw_patches(view1["image"][0].permute(1, 2, 0)*255, kpts1_gt[0], color=(0,255,0), patch_size=16)
+    img_patches0 = draw_patches(view0["image"][i].permute(1, 2, 0)*255, kpts0_gt[i], color=(0,255,0), patch_size=16)
+    img_patches1 = draw_patches(view1["image"][i].permute(1, 2, 0)*255, kpts1_gt[i], color=(0,255,0), patch_size=16)
     
-    img_patches0 = draw_patches(img_patches0, data['photo_loss']['kpts1_0'][0].detach().numpy(), color=(255,0,0), patch_size=16)
-    img_patches1 = draw_patches(img_patches1, data['photo_loss']['kpts0_1'][0].detach().numpy(), color=(255,0,0), patch_size=16)
+    img_patches0 = draw_patches(img_patches0, data['photo_loss']['kpts1_0'][i].detach().numpy(), color=(255,0,0), patch_size=16)
+    img_patches1 = draw_patches(img_patches1, data['photo_loss']['kpts0_1'][i].detach().numpy(), color=(255,0,0), patch_size=16)
 
-    img_patches0 = draw_patches(img_patches0, kpts1_0_gt[0].detach().numpy(), color=(0,0,255))
-    img_patches1 = draw_patches(img_patches1, kpts0_1_gt[0].detach().numpy(), color=(0,0,255), patch_size=16)
+    img_patches0 = draw_patches(img_patches0, kpts1_0_gt[i].detach().numpy(), color=(0,0,255))
+    img_patches1 = draw_patches(img_patches1, kpts0_1_gt[i].detach().numpy(), color=(0,0,255), patch_size=16)
     try:
         img_patches0 = cv2.putText(img_patches0, 'Green: Exctracted', (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1, cv2.LINE_AA)
         img_patches0 = cv2.putText(img_patches0, 'Red: Predicted Projection', (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0), 1, cv2.LINE_AA)
@@ -108,23 +104,23 @@ def debug_batch(data, figs_dpi=100):
 
     fig_matches, axes = plot_image_grid(images, return_fig=True, set_lim=True, dpi=figs_dpi)
     if len(heatmaps) > 0:
-       plot_heatmaps(heatmaps[0], axes=axes[0], a=1.0)
-    plot_keypoints(kpts[0], axes=axes[0], colors="royalblue")
-    plot_matches(*matches[0], color=mcolors[0], axes=axes[0], a=0.5, lw=1.0, ps=0.0)
+       plot_heatmaps(heatmaps[i], axes=axes[i], a=1.0)
+    plot_keypoints(kpts[i], axes=axes[i], colors="royalblue")
+    plot_matches(*matches[i], color=[0,1,0], axes=axes[i], a=0.5, lw=1.0, ps=0.0)
 
     fig_projs, axes = plot_image_grid(images_projs, return_fig=True, set_lim=True, dpi=figs_dpi)   
 
-    patches0 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches0'][0] if not torch.any(p < 0)]
-    patches1_0 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches1_0'][0] if not torch.any(p < 0)]
-    patches1 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches1'][0] if not torch.any(p < 0)]
-    patches0_1 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches0_1'][0] if not torch.any(p < 0)]
+    patches0 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches0'][i] if not torch.any(p < 0)]
+    patches1_0 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches1_0'][i] if not torch.any(p < 0)]
+    patches1 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches1'][i] if not torch.any(p < 0)]
+    patches0_1 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches0_1'][i] if not torch.any(p < 0)]
     
     if(len(patches0) > 10 and len(patches1_0) > 10 and len(patches1) > 10 and len(patches0_1) > 10):
         fig_patches, axes = plot_image_grid([patches0[:10], patches1_0[:10], patches1[:10], patches0_1[:10]], return_fig=True, set_lim=True)
     else:
         fig_patches = None    
     origin = torch.tensor([0, 0, 0, 0, 0, 0])
-    fig_cameras = draw_camera_poses([origin, data['gt_vo'][0], data['pred_vo'][0].detach()], 
+    fig_cameras = draw_camera_poses([origin, data['gt_vo'][i], data['pred_vo'][i].detach()], 
                                     ['cam0', 'gt_cam1', 'pred_cam1'],
                                     dpi=figs_dpi)
     return {"matches": fig_matches, "projs": fig_projs, "patches": fig_patches, "cameras": fig_cameras}
