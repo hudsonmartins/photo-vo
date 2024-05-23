@@ -121,56 +121,58 @@ class PhotoVoModel(nn.Module):
         self.features = self.matcher(data)
 
         kpts0, kpts1 = self.features['keypoints0'], self.features['keypoints1']
+        scores0, scores1 = self.features['matching_scores0'], self.features['matching_scores1']
 
         sorted_matches = get_sorted_matches(self.features)
-        b_valid_matches = []
+
+        kpts0_valid = None
+        kpts1_valid = None
+        scores0_valid = None
+        scores1_valid = None
         for b in range(sorted_matches.size(0)):
-            valid_matches = []
+            b_kpts0_valid, b_kpts1_valid, b_scores0_valid, b_scores1_valid = None, None, None, None
             for m in sorted_matches[b]:
                 if m[1] > -1:
-                    valid_matches.append([m[0], m[1]])
-            b_valid_matches.append(valid_matches)
-        
-        # Extracting matches for m0 and m1
-        m0 = [m[0].long() for matches in b_valid_matches for m in matches]
-        m1 = [m[1].long() for matches in b_valid_matches for m in matches]
-                
-        # Indexing kpts0 and kpts1 with valid matches
-        kpts0_valid = kpts0[:,m0,:]
-        kpts1_valid = kpts1[:,m1,:]
-        scores0_valid = self.features['matching_scores0'][:,m0]
-        scores1_valid = self.features['matching_scores1'][:,m1]
-
-        if(kpts0_valid.size(1) > kpts0.size(1) or kpts1_valid.size(1) > kpts1.size(1)):
-            data['pred_vo'] = torch.full((kpts0.size(0), 6), float('nan'), dtype=kpts0.dtype, device=kpts0.device)
-            data['view0']['patches_coords'] = torch.full((kpts0.size(0), kpts0.size(1), kpts0.size(2)), float('nan'), dtype=kpts0.dtype, device=kpts0.device)
-            data['view1']['patches_coords'] = torch.full((kpts1.size(0), kpts1.size(1), kpts1.size(2)), float('nan'), dtype=kpts1.dtype, device=kpts1.device)
-            data['view0']['patches'] = torch.full((kpts0.size(0), kpts0.size(1), 3, self.config.photo_vo.model.patch_size, self.config.photo_vo.model.patch_size), float('nan'), dtype=kpts0.dtype, device=kpts0.device)
-            data['view1']['patches'] = torch.full((kpts1.size(0), kpts1.size(1), 3, self.config.photo_vo.model.patch_size, self.config.photo_vo.model.patch_size), float('nan'), dtype=kpts1.dtype, device=kpts1.device)
-            return {**data, **self.features}
-           
-        # Fill the invalid kpts with nan
-        kpts0 = torch.cat([kpts0_valid, torch.full((kpts0_valid.size(0), kpts0.size(1)-kpts0_valid.size(1), kpts0_valid.size(2)), float('nan'), dtype=kpts0_valid.dtype, device=kpts0_valid.device)], dim=1)
-        kpts1 = torch.cat([kpts1_valid, torch.full((kpts1_valid.size(0), kpts1.size(1)-kpts1_valid.size(1), kpts1_valid.size(2)), float('nan'), dtype=kpts1_valid.dtype, device=kpts1_valid.device)], dim=1)
-
+                    b_kpts0_valid = kpts0[b][m[0].long()].unsqueeze(0) if b_kpts0_valid is None \
+                                    else torch.cat([b_kpts0_valid, kpts0[b][m[0].long()].unsqueeze(0)], dim=0)
+                    b_kpts1_valid = kpts1[b][m[1].long()].unsqueeze(0) if b_kpts1_valid is None \
+                                    else torch.cat([b_kpts1_valid, kpts1[b][m[1].long()].unsqueeze(0)], dim=0)
+                    b_scores0_valid = scores0[b][m[0].long()].unsqueeze(0) if b_scores0_valid is None \
+                                    else torch.cat([b_scores0_valid, scores0[b][m[0].long()].unsqueeze(0)], dim=0)
+                    b_scores1_valid = scores1[b][m[1].long()].unsqueeze(0) if b_scores1_valid is None \
+                                    else torch.cat([b_scores1_valid, scores1[b][m[1].long()].unsqueeze(0)], dim=0)
+                else:
+                    # Add nan to the invalid matches
+                    if(b_kpts0_valid is None):
+                        b_kpts0_valid = torch.full((1, kpts0.size(2)), float('nan'), dtype=kpts0.dtype, device=kpts0.device)
+                        b_kpts1_valid = torch.full((1, kpts1.size(2)), float('nan'), dtype=kpts1.dtype, device=kpts1.device)
+                        b_scores0_valid = torch.full((1,), 0.0, dtype=scores0.dtype, device=scores0.device)
+                        b_scores1_valid = torch.full((1,), 0.0, dtype=scores1.dtype, device=scores1.device)
+                    else:
+                        b_kpts0_valid = torch.cat([b_kpts0_valid, torch.full((1, kpts0.size(2)), float('nan'), dtype=kpts0.dtype, device=kpts0.device)], dim=0)
+                        b_kpts1_valid = torch.cat([b_kpts1_valid, torch.full((1, kpts1.size(2)), float('nan'), dtype=kpts1.dtype, device=kpts1.device)], dim=0)
+                        b_scores0_valid = torch.cat([b_scores0_valid, torch.full((1,), 0.0, dtype=scores0.dtype, device=scores0.device)], dim=0)
+                        b_scores1_valid = torch.cat([b_scores1_valid, torch.full((1,), 0.0, dtype=scores1.dtype, device=scores1.device)], dim=0)
+            kpts0_valid = b_kpts0_valid.unsqueeze(0) if kpts0_valid is None else torch.cat([kpts0_valid, b_kpts0_valid.unsqueeze(0)], dim=0)
+            kpts1_valid = b_kpts1_valid.unsqueeze(0) if kpts1_valid is None else torch.cat([kpts1_valid, b_kpts1_valid.unsqueeze(0)], dim=0)
+            scores0_valid = b_scores0_valid.unsqueeze(0) if scores0_valid is None else torch.cat([scores0_valid, b_scores0_valid.unsqueeze(0)], dim=0)
+            scores1_valid = b_scores1_valid.unsqueeze(0) if scores1_valid is None else torch.cat([scores1_valid, b_scores1_valid.unsqueeze(0)], dim=0)
         # Extract patches
-        #check device of all tensors
-        patches0 = get_patches(data['view0']['image'], kpts0, self.config.photo_vo.model.patch_size)
-        patches1 = get_patches(data['view1']['image'], kpts1, self.config.photo_vo.model.patch_size)
+        patches0 = get_patches(data['view0']['image'], kpts0_valid, self.config.photo_vo.model.patch_size)
+        patches1 = get_patches(data['view1']['image'], kpts1_valid, self.config.photo_vo.model.patch_size)
         
         # Fill the invalid patches with -1
         patches0 = torch.nan_to_num(patches0, nan=-1.0)
         patches1 = torch.nan_to_num(patches1, nan=-1.0)
-        data['view0']['patches_coords'] = kpts0
-        data['view1']['patches_coords'] = kpts1
+        data['view0']['patches_coords'] = kpts0_valid
+        data['view1']['patches_coords'] = kpts1_valid
         data['view0']['patches'] = patches0
         data['view1']['patches'] = patches1
+
         # Encode patches
         patch_embs= self.penc(data)
         
         # Concat with scores
-        scores0 = torch.cat([scores0_valid, torch.full((scores0_valid.size(0), kpts0.size(1)-scores0_valid.size(1)), -1.0, dtype=scores0_valid.dtype, device=scores0_valid.device)], dim=1)
-        scores1 = torch.cat([scores1_valid, torch.full((scores1_valid.size(0), kpts1.size(1)-scores1_valid.size(1)), -1.0, dtype=scores1_valid.dtype, device=scores1_valid.device)], dim=1)
         scores = torch.cat([scores0, scores1], dim=1)
         patch_embs = torch.cat([patch_embs, scores.unsqueeze(-1)], dim=-1)
         output = self.motion_estimator(image_embs, patch_embs)
@@ -225,12 +227,12 @@ class PhotoVoModel(nn.Module):
         data['gt_vo'] = gt
 
         match_losses, _ = self.matcher.loss(self.features, data)
-        ml = match_losses['total']
+        ml = match_losses['total'].mean()
         w1 = self.config.photo_vo.model.loss_weights.photometric
         w2 = self.config.photo_vo.model.loss_weights.pose
         w3 = self.config.photo_vo.model.loss_weights.match
-        loss = {'photometric_loss': pl, 'pose_error': pe, 'match_loss': ml, 'total': w1*pl + w2*pe + w3*ml}
 
+        loss = {'photometric_loss': pl, 'pose_error': pe, 'match_loss': ml, 'total': w1*pl + w2*pe + w3*ml}
         return loss, data
         
     
