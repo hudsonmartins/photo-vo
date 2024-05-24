@@ -64,9 +64,10 @@ def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, d
     writer = SummaryWriter(log_dir=config.train.tensorboard_dir)
     while(epoch < config.train.epochs):
         for it, data in enumerate(tqdm(train_loader)):
-            #logger.info(f"Starting Iteration {it} in epoch {epoch}")
             tot_n_samples = (len(train_loader) * epoch + it)
             model.train()
+            if(config.features_model.freeze):
+                model.matcher.eval()
             optimizer.zero_grad()
             data = batch_to_device(data, device, non_blocking=True)
             output = model(data)
