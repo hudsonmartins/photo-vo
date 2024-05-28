@@ -7,7 +7,7 @@ from gluefactory.geometry.wrappers import Pose
 
 import torchvision.models as models
 import torch.utils.model_zoo as model_zoo
-from utils import get_patches, get_sorted_matches, normalize_image, get_kpts_projection, matrix_to_euler_angles, euler_angles_to_matrix
+from utils import get_patches, get_sorted_matches, get_kpts_projection, matrix_to_euler_angles, euler_angles_to_matrix
 from loss import patches_photometric_loss, pose_error
 
 
@@ -57,8 +57,6 @@ class ResNetMultiImageInput(models.ResNet):
 class ImagePairEncoder(nn.Module):
     def __init__(self, config):
         super(ImagePairEncoder, self).__init__()
-        
-        self.channels = np.array([64, 64, 128, 256, config.photo_vo.model.dim_image_emb])
         block_type = models.resnet.BasicBlock
         layers = [2, 2, 2, 2]
         self.encoder = ResNetMultiImageInput(block_type, layers, config, num_input_images=2)
@@ -69,18 +67,14 @@ class ImagePairEncoder(nn.Module):
     def forward(self, data):
         im0 = data['view0']['image']
         im1 = data['view1']['image']
-        im0 = normalize_image(im0)
-        im1 = normalize_image(im1)
         images = torch.cat([im0, im1], dim=1)
         x = self.encoder.conv1(images)
         x = self.encoder.bn1(x)
         x = self.encoder.relu(x)
-        x = self.encoder.maxpool(x)
-        x = self.encoder.layer1(x)
+        x = self.encoder.layer1(self.encoder.maxpool(x))
         x = self.encoder.layer2(x)
         x = self.encoder.layer3(x)
-        x = self.encoder.layer4(x)
-        return x
+        return self.encoder.layer4(x)
 
 
 class MotionEstimator(nn.Module):
@@ -119,10 +113,8 @@ class PhotoVoModel(nn.Module):
         image_embs = self.imgenc(data)
         # Extract and match features
         self.features = self.matcher(data)
-
         kpts0, kpts1 = self.features['keypoints0'], self.features['keypoints1']
         scores0, scores1 = self.features['matching_scores0'], self.features['matching_scores1']
-
         sorted_matches = get_sorted_matches(self.features)
 
         kpts0_valid = None
@@ -167,10 +159,8 @@ class PhotoVoModel(nn.Module):
         data['view1']['patches_coords'] = kpts1_valid
         data['view0']['patches'] = patches0
         data['view1']['patches'] = patches1
-
         # Encode patches
-        patch_embs= self.penc(data)
-        
+        patch_embs= self.penc(data)        
         # Concat with scores
         scores = torch.cat([scores0, scores1], dim=1)
         patch_embs = torch.cat([patch_embs, scores.unsqueeze(-1)], dim=-1)
