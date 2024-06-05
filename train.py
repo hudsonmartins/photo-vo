@@ -60,10 +60,12 @@ def do_evaluation(val_loader, model, device, n_images=5):
     return avg_losses, all_figs
 
 
-def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, debug=False):
+def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, start_iter=0, debug=False):
     writer = SummaryWriter(log_dir=config.train.tensorboard_dir)
     while(epoch < config.train.epochs):
         for it, data in enumerate(tqdm(train_loader)):
+            if(it < start_iter):
+                continue
             tot_n_samples = (len(train_loader) * epoch + it)
             model.train()
             if(config.features_model.freeze):
@@ -79,8 +81,15 @@ def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, d
             optimizer.step()
 
             if(debug):
-                debug_batch(output, figs_dpi=100)
-                plt.show()
+                figs = debug_batch(output, figs_dpi=100)
+                #plot figs
+                for k, v in figs.items():
+                    if(v):
+                        plt.figure(figsize=(10, 10), dpi=100)
+                        plt.imshow(v)
+                        plt.axis('off')
+                        plt.savefig(f"debug_{k}.png")
+                        plt.close()
 
             if(it % config.train.log_every_iter == 0):
                 logger.info(f"[Train] Epoch {epoch} Iteration {it} Loss: {loss['total'].mean()}")
@@ -100,7 +109,7 @@ def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, d
                 if(loss):
                     logger.info(f"[Val] Epoch: {epoch} Iteration: {it} Loss: {loss['total'].mean()}")
                     for k, v in loss.items():
-                        writer.add_scalar("val/loss/" + k, v.mean(), tot_n_samples)                    
+                        writer.add_scalar("val/loss/" + k, v.mean(), tot_n_samples)
                     for k, v in figs.items():
                         if(v):
                             writer.add_figure("val/fig/" + k, v, tot_n_samples)
@@ -190,6 +199,10 @@ def main(args):
         photo_vo_model.load_state_dict(init_cp["model"], strict=False)
         epoch = init_cp["epoch"]
         optimizer.load_state_dict(init_cp["optimizer"])
+        if(conf.train.lr != optimizer.param_groups[0]['lr']):
+            logger.info(f"Overwriting learning rate from checkpoint {optimizer.param_groups[0]['lr']} to {conf.train.lr}")
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = conf.train.lr
         logger.info(f"Restored model from epoch {epoch}")
     del init_cp
 
@@ -200,7 +213,7 @@ def main(args):
         for param in photo_vo_model.matcher.parameters():
             param.requires_grad = False
             
-    train(photo_vo_model, train_loader, val_loader, optimizer, device, conf, epoch, args.debug)
+    train(photo_vo_model, train_loader, val_loader, optimizer, device, conf, epoch, args.start_iter, args.debug)
 
 
 if __name__ == "__main__":
@@ -210,6 +223,7 @@ if __name__ == "__main__":
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--load_best_model", action="store_true")
     parser.add_argument("--use_cuda", action="store_true")
+    parser.add_argument("--start_iter", type=int, default=0)
 
     args = parser.parse_args()
     main(args)
