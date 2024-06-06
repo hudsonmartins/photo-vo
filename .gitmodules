@@ -1,3 +1,6 @@
 [submodule "glue-factory"]
 	path = glue-factory
 	url = https://github.com/hudsonmartins/glue-factory
+[submodule "modvo"]
+	path = modvo
+	url = git@github.com:larocs/modvo.git
