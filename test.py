@@ -8,6 +8,7 @@ import numpy as np
 from omegaconf import OmegaConf
 from model import get_photo_vo_model
 from utils import euler_angles_to_matrix
+from gluefactory.utils.image import numpy_image_to_torch, ImagePreprocessor
 
 from modvo.vo.tracker import Tracker
 
@@ -16,14 +17,30 @@ class PhotoVOTracker(Tracker):
         self.first_image = True
         self.index = 0
         self.img0, self.img1 = None, None
-        self.photo_vo_model = self.load_model(params['model_path'])
+        self.photo_vo_model = self.load_model(params['path'])
 
     def load_model(self, model_path):
         cp = torch.load(model_path)
         model = get_photo_vo_model(OmegaConf.create(cp["conf"]))
         model.load_state_dict(cp["model"], strict=False)
         model.eval()
+        self.preprocessor = ImagePreprocessor(OmegaConf.create(cp["conf"]["data"]["preprocessing"]))
         return model
+    
+    def get_input(self):
+        im0_torch = numpy_image_to_torch(self.img0)
+        im1_torch = numpy_image_to_torch(self.img1)
+        im0 = self.preprocessor(im0_torch)['image']
+        im1 = self.preprocessor(im1_torch)['image']
+        return {
+                'view0': {
+                    'image': torch.unsqueeze(im0, 0),
+                },
+                'view1': {
+                    'image': torch.unsqueeze(im1, 0),
+                }
+            }
+
     
     def track(self, image):
         if(self.index == 0):
@@ -32,12 +49,11 @@ class PhotoVOTracker(Tracker):
             self.img0 = image
         else:
             self.img1 = image
-            data = {}
-            data['view0']['image'] = self.img0
-            data['view1']['image'] = self.img1
-            vo = self.photo_vo(data)['pred_vo'][0]
-            t = vo[:3].reshape(3, 1)
-            R = euler_angles_to_matrix(vo[3:]).reshape(3, 3)
+            data = self.get_input()
+            vo = self.photo_vo_model(data)['pred_vo'][0]
+            t = vo[:3].reshape(3, 1).detach().cpu().numpy()
+            R = euler_angles_to_matrix(vo[3:], "XYZ").reshape(3, 3).detach().cpu().numpy()
+            
             self.t = self.t + self.R.dot(t)
             self.R = R.dot(self.R)
             self.img0 = self.img1
@@ -59,8 +75,8 @@ def main(args):
     params = {k: v for k, v in config['dataloader'].items() if k != 'class'}
     dataloader = attr(**params)
     
-    model_path = 'best_model.tar'
-    vo = PhotoVOTracker(model_path=model_path)
+    params = {k: v for k, v in config['model'].items() if k != 'class'}
+    vo = PhotoVOTracker(**params)
 
     os.makedirs(args.output_path, exist_ok=True)
     log_fopen = open(os.path.join(args.output_path, args.trajectory_file), mode='a')
