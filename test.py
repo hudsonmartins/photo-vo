@@ -14,16 +14,19 @@ from modvo.vo.tracker import Tracker
 
 class PhotoVOTracker(Tracker):
     def __init__(self, **params):
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.first_image = True
         self.index = 0
         self.img0, self.img1 = None, None
         self.photo_vo_model = self.load_model(params['path'])
+        
 
     def load_model(self, model_path):
         cp = torch.load(model_path)
         model = get_photo_vo_model(OmegaConf.create(cp["conf"]))
         model.load_state_dict(cp["model"], strict=False)
         model.eval()
+        model.to(self.device)
         self.preprocessor = ImagePreprocessor(OmegaConf.create(cp["conf"]["data"]["preprocessing"]))
         return model
     
@@ -34,29 +37,30 @@ class PhotoVOTracker(Tracker):
         im1 = self.preprocessor(im1_torch)['image']
         return {
                 'view0': {
-                    'image': torch.unsqueeze(im0, 0),
+                    'image': torch.unsqueeze(im0, 0).to(self.device),
                 },
                 'view1': {
-                    'image': torch.unsqueeze(im1, 0),
+                    'image': torch.unsqueeze(im1, 0).to(self.device),
                 }
             }
 
     
     def track(self, image):
-        if(self.index == 0):
-            self.R = np.identity(3)
-            self.t = np.zeros((3, 1))
-            self.img0 = image
-        else:
-            self.img1 = image
-            data = self.get_input()
-            vo = self.photo_vo_model(data)['pred_vo'][0]
-            t = vo[:3].reshape(3, 1).detach().cpu().numpy()
-            R = euler_angles_to_matrix(vo[3:], "XYZ").reshape(3, 3).detach().cpu().numpy()
-            
-            self.t = self.t + self.R.dot(t)
-            self.R = R.dot(self.R)
-            self.img0 = self.img1
+        with torch.no_grad():
+            if(self.index == 0):
+                self.R = np.identity(3)
+                self.t = np.zeros((3, 1))
+                self.img0 = image
+            else:
+                self.img1 = image
+                data = self.get_input()
+                vo = self.photo_vo_model(data)['pred_vo'][0]
+                t = vo[:3].reshape(3, 1).detach().cpu().numpy()
+                R = euler_angles_to_matrix(vo[3:], "XYZ").reshape(3, 3).detach().cpu().numpy()
+                
+                self.t = self.t + self.R.dot(t)
+                self.R = R.dot(self.R)
+                self.img0 = self.img1
             
         self.index += 1
 
@@ -141,7 +145,6 @@ def parse_args():
     parser.add_argument('--trajectory_file', type=str, default = 'trajectory.txt', help='name of the trajectory file')
     parser.add_argument('--output_format', type=str, default = 'kitti', help='file format to save trajectory (either kitti or tum)')
     parser.add_argument('--enable_gui', action='store_true', help='use this flag to enable gui')
-    
     args = parser.parse_args()
     return args
 
