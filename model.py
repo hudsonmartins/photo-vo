@@ -96,7 +96,7 @@ class MotionEstimator(nn.Module):
             nn.GELU(),
             nn.Conv1d(32, 16, 1),
             nn.GELU(),
-            nn.Conv1d(32, 6, 1)
+            nn.Conv1d(16, 6, 1)
         )
 
     def forward(self, image_embs, patch_embs):
