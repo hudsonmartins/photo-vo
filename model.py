@@ -83,15 +83,19 @@ class MotionEstimator(nn.Module):
         self.flatten = nn.Flatten(start_dim=2, end_dim=3)
         self.decoder = nn.Sequential(
             nn.Conv1d(config.photo_vo.model.dim_image_emb, 512, 1),
-            nn.ReLU(),
+            nn.GELU(),
+            nn.Conv1d(512, 512, 1),
+            nn.GELU(),
             nn.Conv1d(512, 256, 1),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Conv1d(256, 128, 1),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Conv1d(128, 64, 1),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Conv1d(64, 32, 1),
-            nn.ReLU(),
+            nn.GELU(),
+            nn.Conv1d(32, 16, 1),
+            nn.GELU(),
             nn.Conv1d(32, 6, 1)
         )
 
