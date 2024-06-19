@@ -106,7 +106,6 @@ class MotionEstimator(nn.Module):
     def forward(self, image_embs, patch_embs):
         patch_embs = patch_embs.permute(0, 2, 1)
         x = torch.cat([self.flatten(image_embs), patch_embs], dim=2)
-        print('x shape ', x.shape)
         x = self.decoder(x)
         return torch.mean(x, dim=2)
 
