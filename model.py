@@ -4,7 +4,6 @@ import numpy as np
 from torch import nn
 import gluefactory as gf
 from gluefactory.geometry.wrappers import Pose
-from einops import rearrange
 
 import torchvision.models as models
 import torch.utils.model_zoo as model_zoo
