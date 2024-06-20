@@ -49,7 +49,7 @@ photo_vo:
     name: photo_vo
     model:
       patch_size: 16
-      dim_emb: 128
+      dim_emb: 512
       loss_weights:
         photometric: 0.25
         pose: 0.75
