@@ -85,30 +85,18 @@ class MotionEstimator(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.flatten = nn.Flatten(start_dim=2, end_dim=3)
-        self.decoder = nn.Sequential(
-            nn.Conv1d(config.photo_vo.model.dim_emb, 512, 1),
-            nn.ReLU(),
-            nn.Conv1d(512, 512, 1),
-            nn.ReLU(),
-            nn.Conv1d(512, 256, 1),
-            nn.ReLU(),
-            nn.Conv1d(256, 128, 1),
-            nn.ReLU(),
-            nn.Conv1d(128, 64, 1),
-            nn.ReLU(),
-            nn.Conv1d(64, 32, 1),
-            nn.ReLU(),
-            nn.Conv1d(32, 16, 1),
-            nn.ReLU(),
-            nn.Conv1d(16, 6, 1)
-        )
+        self.avgpool = nn.AdaptiveAvgPool1d(1)
+        self.fc = nn.Linear(config.photo_vo.model.dim_emb, 6)
 
     def forward(self, image_embs, patch_embs):
         patch_embs = patch_embs.permute(0, 2, 1)
         x = torch.cat([self.flatten(image_embs), patch_embs], dim=2)
-        x = self.decoder(x)
-        return torch.mean(x, dim=2)
-
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
+        x = self.fc(x)
+        return x
+        #x = self.decoder(x)
+        #return torch.mean(x, dim=2)
 
 
 class PhotoVoModel(nn.Module):
