@@ -95,8 +95,6 @@ class MotionEstimator(nn.Module):
         x = torch.flatten(x, 1)
         x = self.fc(x)
         return x
-        #x = self.decoder(x)
-        #return torch.mean(x, dim=2)
 
 
 class PhotoVoModel(nn.Module):
