@@ -86,7 +86,13 @@ class MotionEstimator(nn.Module):
         super().__init__()
         self.flatten = nn.Flatten(start_dim=2, end_dim=3)
         self.avgpool = nn.AdaptiveAvgPool1d(1)
-        self.fc = nn.Linear(config.photo_vo.model.dim_emb, 6)
+        self.fc = nn.Sequential(nn.Linear(config.photo_vo.model.dim_emb, 512),
+                                nn.ReLU(),
+                                nn.Linear(512, 256),
+                                nn.ReLU(),
+                                nn.Linear(256, 128),
+                                nn.ReLU(),
+                                nn.Linear(128, 6))
 
     def forward(self, image_embs, patch_embs):
         patch_embs = patch_embs.permute(0, 2, 1)
