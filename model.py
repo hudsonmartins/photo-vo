@@ -11,6 +11,7 @@ from utils import get_patches, get_sorted_matches, get_kpts_projection, matrix_t
 from loss import patches_photometric_loss, pose_error
 
 
+    
 class PatchEncoder(nn.Module):
     def __init__(self, config):
         '''
@@ -21,8 +22,8 @@ class PatchEncoder(nn.Module):
         patch_dim = 3 * config.photo_vo.model.patch_size ** 2
         self.patch_emb = nn.Sequential(nn.Flatten(start_dim=2, end_dim=4),
                                        nn.LayerNorm(patch_dim),
-                                       nn.Linear(patch_dim, config.photo_vo.model.dim_image_emb-1),
-                                       nn.LayerNorm(config.photo_vo.model.dim_image_emb-1))
+                                       nn.Linear(patch_dim, config.photo_vo.model.dim_emb-1),
+                                       nn.LayerNorm(config.photo_vo.model.dim_emb-1))
         
     def forward(self, data):
         patches = torch.cat([data['view0']['patches'], data['view1']['patches']], dim=1)
@@ -33,7 +34,7 @@ class ResNetMultiImageInput(models.ResNet):
     """Constructs a resnet model with varying number of input images.
     Extracted from: https://github.com/nianticlabs/monodepth2/blob/master/networks/resnet_encoder.py#L17
     """
-    def __init__(self, block, layers, config, num_input_images=2):
+    def __init__(self, block, layers, num_input_images=2):
         super(ResNetMultiImageInput, self).__init__(block, layers)
         self.inplanes = 64
         self.conv1 = nn.Conv2d(
@@ -44,7 +45,7 @@ class ResNetMultiImageInput(models.ResNet):
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
-        self.layer4 = self._make_layer(block, config.photo_vo.model.dim_image_emb, layers[3], stride=2)
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -59,11 +60,13 @@ class ImagePairEncoder(nn.Module):
         super(ImagePairEncoder, self).__init__()
         block_type = models.resnet.BasicBlock
         layers = [2, 2, 2, 2]
-        self.encoder = ResNetMultiImageInput(block_type, layers, config, num_input_images=2)
+        self.encoder = ResNetMultiImageInput(block_type, layers, num_input_images=2)
         resnet18 = model_zoo.load_url(models.resnet.ResNet18_Weights.IMAGENET1K_V1.url)
         resnet18['conv1.weight'] = torch.cat([resnet18['conv1.weight']] * 2, 1)/2
         self.encoder.load_state_dict(resnet18)
-    
+        self.output = nn.Sequential(nn.Conv2d(512, config.photo_vo.model.dim_emb, kernel_size=1),
+                                    nn.BatchNorm2d(config.photo_vo.model.dim_emb),
+                                    nn.ReLU())
     def forward(self, data):
         im0 = data['view0']['image']
         im1 = data['view1']['image']
@@ -74,32 +77,24 @@ class ImagePairEncoder(nn.Module):
         x = self.encoder.layer1(self.encoder.maxpool(x))
         x = self.encoder.layer2(x)
         x = self.encoder.layer3(x)
-        return self.encoder.layer4(x)
+        x = self.encoder.layer4(x)
+        return self.output(x)
 
 
 class MotionEstimator(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.flatten = nn.Flatten(start_dim=2, end_dim=3)
-        self.decoder = nn.Sequential(
-            nn.Conv1d(config.photo_vo.model.dim_image_emb, 512, 1),
-            nn.ReLU(),
-            nn.Conv1d(512, 256, 1),
-            nn.ReLU(),
-            nn.Conv1d(256, 128, 1),
-            nn.ReLU(),
-            nn.Conv1d(128, 64, 1),
-            nn.ReLU(),
-            nn.Conv1d(64, 32, 1),
-            nn.ReLU(),
-            nn.Conv1d(32, 6, 1)
-        )
+        self.avgpool = nn.AdaptiveAvgPool1d(1)
+        self.fc = nn.Linear(config.photo_vo.model.dim_emb, 6)
 
     def forward(self, image_embs, patch_embs):
         patch_embs = patch_embs.permute(0, 2, 1)
         x = torch.cat([self.flatten(image_embs), patch_embs], dim=2)
-        x = self.decoder(x)
-        return torch.mean(x, dim=2)
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
+        x = self.fc(x)
+        return x
 
 
 class PhotoVoModel(nn.Module):
