@@ -85,15 +85,23 @@ class MotionEstimator(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.flatten = nn.Flatten(start_dim=2, end_dim=3)
-        self.avgpool = nn.AdaptiveAvgPool1d(1)
-        self.fc = nn.Linear(config.photo_vo.model.dim_emb, 6)
+        self.relu = nn.ReLU()
+        self.avgpool1 = nn.AdaptiveAvgPool1d(config.photo_vo.model.dim_emb)
+        self.fc1 = nn.Linear(config.photo_vo.model.dim_emb*config.photo_vo.model.dim_emb, 
+                             config.features_model.extractor.max_num_keypoints)
+        self.fc2 = nn.Linear(config.features_model.extractor.max_num_keypoints, config.photo_vo.model.dim_emb)
+        self.fc3 = nn.Linear(config.photo_vo.model.dim_emb, 6)
 
     def forward(self, image_embs, patch_embs):
         patch_embs = patch_embs.permute(0, 2, 1)
         x = torch.cat([self.flatten(image_embs), patch_embs], dim=2)
-        x = self.avgpool(x)
+        x = self.avgpool1(x)
         x = torch.flatten(x, 1)
-        x = self.fc(x)
+        x = self.fc1(x)
+        x = self.relu(x)
+        x = self.fc2(x)
+        x = self.relu(x)
+        x = self.fc3(x)
         return x
 
 
