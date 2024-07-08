@@ -27,7 +27,7 @@ features_model:
     freeze: True
     extractor:
         name: extractors.superpoint_open
-        max_num_keypoints: 1024
+        max_num_keypoints: 2048
         force_num_keypoints: True
         detection_threshold: -1
         nms_radius: 3
@@ -50,7 +50,8 @@ photo_vo:
     name: photo_vo
     model:
         patch_size: 16
-        dim_emb: 128
+        dim_emb: 64
+        num_matches: 50
         loss_weights:
           photometric: 0.25
           pose: 0.5
