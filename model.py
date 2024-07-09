@@ -115,6 +115,7 @@ class PhotoVoModel(nn.Module):
         kpts0, kpts1 = self.features['keypoints0'], self.features['keypoints1']
         scores0, scores1 = self.features['matching_scores0'], self.features['matching_scores1']
         sorted_matches = get_sorted_matches(self.features)
+        sorted_matches = sorted_matches[:, :self.config.photo_vo.model.num_matches]
 
         kpts0_valid = None
         kpts1_valid = None
@@ -161,7 +162,7 @@ class PhotoVoModel(nn.Module):
         # Encode patches
         patch_embs= self.penc(data)        
         # Concat with scores
-        scores = torch.cat([scores0, scores1], dim=1)
+        scores = torch.cat([scores0_valid, scores1_valid], dim=1)
         patch_embs = torch.cat([patch_embs, scores.unsqueeze(-1)], dim=-1)
         output = self.motion_estimator(image_embs, patch_embs)
         data['pred_vo'] = output
