@@ -1,6 +1,5 @@
 
 import torch
-import numpy as np
 from torch import nn
 import gluefactory as gf
 from gluefactory.geometry.wrappers import Pose
