@@ -1,4 +1,4 @@
-import os, sys
+import os
 import torch
 import glob
 import argparse
@@ -85,11 +85,8 @@ def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, s
                 #plot figs
                 for k, v in figs.items():
                     if(v):
-                        plt.figure(figsize=(10, 10), dpi=100)
-                        plt.imshow(v)
-                        plt.axis('off')
-                        plt.savefig(f"debug_{k}.png")
-                        plt.close()
+                        v.savefig(f"debug_{k}_{tot_n_samples}.png")
+                        
 
             if(it % config.train.log_every_iter == 0):
                 logger.info(f"[Train] Epoch {epoch} Iteration {it} Loss: {loss['total'].mean()}")
@@ -211,8 +208,7 @@ def main(args):
     if(conf.features_model.freeze):
         logger.info("Freezing the features model")
         for param in photo_vo_model.matcher.parameters():
-            param.requires_grad = False
-            
+            param.requires_grad = False        
     train(photo_vo_model, train_loader, val_loader, optimizer, device, conf, epoch, args.start_iter, args.debug)
 
 
