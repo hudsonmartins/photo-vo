@@ -86,12 +86,18 @@ class MotionEstimator(nn.Module):
         self.flatten = nn.Flatten(start_dim=2, end_dim=3)
         self.avgpool = nn.AdaptiveAvgPool1d(1)
         self.fc = nn.Linear(config.photo_vo.model.dim_emb, 6)
-        self.attention = nn.MultiheadAttention(embed_dim=config.photo_vo.model.dim_emb, num_heads=8)
-
+        self.self_patch_att = nn.MultiheadAttention(embed_dim=config.photo_vo.model.dim_emb, num_heads=8)
+        self.self_img_att = nn.MultiheadAttention(embed_dim=config.photo_vo.model.dim_emb, num_heads=8)
+        
     def forward(self, image_embs, patch_embs):
-        patch_embs = self.attention(patch_embs, patch_embs, patch_embs)[0]
+        patch_embs = self.self_patch_att(patch_embs, patch_embs, patch_embs)[0]
         patch_embs = patch_embs.permute(0, 2, 1)
-        x = torch.cat([self.flatten(image_embs), patch_embs], dim=2)
+
+        image_embs = self.flatten(image_embs).permute(0, 2, 1)
+        image_embs = self.self_img_att(image_embs, image_embs, image_embs)[0]
+        image_embs = image_embs.permute(0, 2, 1)
+
+        x = torch.cat([image_embs, patch_embs], dim=2)
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
         x = self.fc(x)
