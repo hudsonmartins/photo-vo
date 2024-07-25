@@ -14,7 +14,7 @@ data:
     max_overlap: 1.0
     read_depth: true
     read_image: true
-    batch_size: 8
+    batch_size: 12
     num_workers: 1
     load_features:
         do: false
