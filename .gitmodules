@@ -4,3 +4,6 @@
 [submodule "modvo"]
 	path = modvo
 	url = git@github.com:larocs/modvo.git
+[submodule "vit-pytorch"]
+	path = vit-pytorch
+	url = git@github.com:hudsonmartins/vit-pytorch.git

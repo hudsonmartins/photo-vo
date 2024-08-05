@@ -4,9 +4,9 @@ import numpy as np
 from torch import nn
 import gluefactory as gf
 from gluefactory.geometry.wrappers import Pose
+from vit_pytorch.simple_vit_3d import SimpleViT
+from vit_pytorch.extractor import Extractor
 
-import torchvision.models as models
-import torch.utils.model_zoo as model_zoo
 from utils import get_patches, get_sorted_matches, get_kpts_projection, matrix_to_euler_angles, euler_angles_to_matrix
 from loss import patches_photometric_loss, pose_error
 
@@ -29,56 +29,33 @@ class PatchEncoder(nn.Module):
         patches = torch.cat([data['view0']['patches'], data['view1']['patches']], dim=1)
         return self.patch_emb(patches)
     
-
-class ResNetMultiImageInput(models.ResNet):
-    """Constructs a resnet model with varying number of input images.
-    Extracted from: https://github.com/nianticlabs/monodepth2/blob/master/networks/resnet_encoder.py#L17
-    """
-    def __init__(self, block, layers, num_input_images=2):
-        super(ResNetMultiImageInput, self).__init__(block, layers)
-        self.inplanes = 64
-        self.conv1 = nn.Conv2d(
-            num_input_images * 3, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        self.bn1 = nn.BatchNorm2d(64)
-        self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.layer1 = self._make_layer(block, 64, layers[0])
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
-
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-
-
 class ImagePairEncoder(nn.Module):
     def __init__(self, config):
         super(ImagePairEncoder, self).__init__()
-        block_type = models.resnet.BasicBlock
-        layers = [2, 2, 2, 2]
-        self.encoder = ResNetMultiImageInput(block_type, layers, num_input_images=2)
-        resnet18 = model_zoo.load_url(models.resnet.ResNet18_Weights.IMAGENET1K_V1.url)
-        resnet18['conv1.weight'] = torch.cat([resnet18['conv1.weight']] * 2, 1)/2
-        self.encoder.load_state_dict(resnet18)
-        self.output = nn.Sequential(nn.Conv2d(512, config.photo_vo.model.dim_emb, kernel_size=1),
-                                    nn.BatchNorm2d(config.photo_vo.model.dim_emb),
-                                    nn.ReLU())
+        vit = SimpleViT(
+                image_size = config.data.preprocessing.resize, # image size
+                frames = 2,               # number of frames
+                image_patch_size = 16,     # image patch size
+                frame_patch_size = 2,      # frame patch size
+                num_classes = 6,
+                dim = config.photo_vo.model.dim_emb,
+                depth = 6,
+                heads = 8,
+                mlp_dim = 6
+            )
+        
+        self.extractor = Extractor(vit)
+
     def forward(self, data):
         im0 = data['view0']['image']
         im1 = data['view1']['image']
-        images = torch.cat([im0, im1], dim=1)
-        x = self.encoder.conv1(images)
-        x = self.encoder.bn1(x)
-        x = self.encoder.relu(x)
-        x = self.encoder.layer1(self.encoder.maxpool(x))
-        x = self.encoder.layer2(x)
-        x = self.encoder.layer3(x)
-        x = self.encoder.layer4(x)
-        return self.output(x)
+        im0 = torch.unsqueeze(im0, 2)
+        im1 = torch.unsqueeze(im1, 2)
+        images = torch.cat([im0, im1], dim=2)
+        print('images ', images.shape)
+        _, embeddings = self.extractor(images)
+        print('embeddings ', embeddings.shape)
+        return embeddings
 
 
 class MotionEstimator(nn.Module):
@@ -89,8 +66,11 @@ class MotionEstimator(nn.Module):
         self.fc = nn.Linear(config.photo_vo.model.dim_emb, 6)
 
     def forward(self, image_embs, patch_embs):
-        patch_embs = patch_embs.permute(0, 2, 1)
-        x = torch.cat([self.flatten(image_embs), patch_embs], dim=2)
+        #patch_embs = patch_embs.permute(0, 2, 1)
+
+        x = torch.cat([image_embs, patch_embs], dim=1)
+        x = x.permute(0, 2, 1)
+
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
         x = self.fc(x)
@@ -110,6 +90,7 @@ class PhotoVoModel(nn.Module):
     def forward(self, data):
         # Encode images
         image_embs = self.imgenc(data)
+        print('Image embeddings shape:', image_embs.shape)
         # Extract and match features
         self.features = self.matcher(data)
         kpts0, kpts1 = self.features['keypoints0'], self.features['keypoints1']
