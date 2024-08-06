@@ -3,14 +3,13 @@ import torch
 from torch import nn
 import gluefactory as gf
 from gluefactory.geometry.wrappers import Pose
-from vit_pytorch.simple_vit_3d import SimpleViT
-from vit_pytorch.extractor import Extractor
+from transformers import Swinv2Model, AutoModelForImageClassification
 
 from utils import get_patches, get_sorted_matches, get_kpts_projection, matrix_to_euler_angles, euler_angles_to_matrix
 from loss import patches_photometric_loss, pose_error
 
+import cv2
 
-    
 class PatchEncoder(nn.Module):
     def __init__(self, config):
         '''
@@ -31,27 +30,16 @@ class PatchEncoder(nn.Module):
 class ImagePairEncoder(nn.Module):
     def __init__(self, config):
         super(ImagePairEncoder, self).__init__()
-        vit = SimpleViT(
-                image_size = config.data.preprocessing.resize, # image size
-                frames = 2,               # number of frames
-                image_patch_size = config.photo_vo.model.patch_size,     # image patch size
-                frame_patch_size = 2,      # frame patch size
-                num_classes = 6,
-                dim = config.photo_vo.model.dim_emb,
-                depth = 6,
-                heads = 8,
-                mlp_dim = 2048
-            )
-        self.extractor = Extractor(vit)
+        self.conv = nn.Conv2d(6, 3, kernel_size=1)
+        self.swinv2 = Swinv2Model.from_pretrained("microsoft/swinv2-base-patch4-window8-256")
 
     def forward(self, data):
         im0 = data['view0']['image']
         im1 = data['view1']['image']
-        im0 = torch.unsqueeze(im0, 2)
-        im1 = torch.unsqueeze(im1, 2)
-        images = torch.cat([im0, im1], dim=2)
-        _, embeddings = self.extractor(images)
-        return embeddings
+        imgs = torch.cat([im0, im1], dim=1)
+        input = self.conv(imgs)
+        outputs = self.swinv2(input)
+        return outputs.last_hidden_state
 
 
 class MotionEstimator(nn.Module):
@@ -64,8 +52,8 @@ class MotionEstimator(nn.Module):
 
     def forward(self, image_embs, patch_embs):
         patch_embs = self.attention(patch_embs, patch_embs, patch_embs)[0]
-        x = torch.cat([image_embs, patch_embs], dim=1)
-        x = x.permute(0, 2, 1)
+        patch_embs = patch_embs.permute(0, 2, 1)
+        x = torch.cat([image_embs, patch_embs], dim=2)
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
         x = self.fc(x)
