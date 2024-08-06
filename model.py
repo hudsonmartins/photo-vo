@@ -3,12 +3,11 @@ import torch
 from torch import nn
 import gluefactory as gf
 from gluefactory.geometry.wrappers import Pose
-from transformers import Swinv2Model, AutoModelForImageClassification
+from transformers import Swinv2Model
 
 from utils import get_patches, get_sorted_matches, get_kpts_projection, matrix_to_euler_angles, euler_angles_to_matrix
 from loss import patches_photometric_loss, pose_error
 
-import cv2
 
 class PatchEncoder(nn.Module):
     def __init__(self, config):
