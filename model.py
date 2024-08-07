@@ -35,8 +35,8 @@ class ImagePairEncoder(nn.Module):
         self.swinv2.embeddings.patch_embeddings.projection = self.input_layer
                                                 
     def forward(self, data):
-        im0 = data['view0']['image']
-        im1 = data['view1']['image']        
+        im0 = torch.clamp(data['view0']['image'], 0, 1)
+        im1 = torch.clamp(data['view1']['image'], 0, 1)
         input0 = self.image_processor(im0, return_tensors="pt", do_rescale=False).to(im0.device)
         input1 = self.image_processor(im1, return_tensors="pt", do_rescale=False).to(im1.device)
         input = {k: torch.cat([input0[k], input1[k]], dim=1) for k in input0.keys()}
