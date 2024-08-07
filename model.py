@@ -3,7 +3,7 @@ import torch
 from torch import nn
 import gluefactory as gf
 from gluefactory.geometry.wrappers import Pose
-from transformers import Swinv2Model
+from transformers import Swinv2Model, AutoImageProcessor
 
 from utils import get_patches, get_sorted_matches, get_kpts_projection, matrix_to_euler_angles, euler_angles_to_matrix
 from loss import patches_photometric_loss, pose_error
@@ -30,13 +30,16 @@ class ImagePairEncoder(nn.Module):
     def __init__(self, config):
         super(ImagePairEncoder, self).__init__()
         self.conv = nn.Conv2d(6, 3, kernel_size=1)
+        self.image_processor = AutoImageProcessor.from_pretrained("microsoft/swinv2-base-patch4-window8-256")
         self.swinv2 = Swinv2Model.from_pretrained("microsoft/swinv2-base-patch4-window8-256")
 
     def forward(self, data):
         im0 = data['view0']['image']
-        im1 = data['view1']['image']
-        imgs = torch.cat([im0, im1], dim=1)
-        input = self.conv(imgs)
+        im1 = data['view1']['image']        
+        input0 = self.image_processor(im0, return_tensors="pt", do_rescale=False).to(im0.device)
+        input1 = self.image_processor(im1, return_tensors="pt", do_rescale=False).to(im1.device)
+        input = {k: torch.cat([input0[k], input1[k]], dim=1) for k in input0.keys()}
+        input = self.conv(input['pixel_values'])
         outputs = self.swinv2(input)
         return outputs.last_hidden_state
 
