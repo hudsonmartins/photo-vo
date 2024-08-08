@@ -31,17 +31,21 @@ class ImagePairEncoder(nn.Module):
         super(ImagePairEncoder, self).__init__()
         self.image_processor = AutoImageProcessor.from_pretrained("microsoft/swinv2-base-patch4-window8-256")
         self.swinv2 = Swinv2Model.from_pretrained("microsoft/swinv2-base-patch4-window8-256")
-        self.input_layer = nn.Conv2d(6, 128, kernel_size=(4,4), stride=(4,4))
-        self.swinv2.embeddings.patch_embeddings.projection = self.input_layer
-                                                
+        #self.input_layer = nn.Conv2d(6, 128, kernel_size=(4,4), stride=(4,4))
+        #self.swinv2.embeddings.patch_embeddings.projection = self.input_layer
+        
     def forward(self, data):
         im0 = torch.clamp(data['view0']['image'], 0, 1)
         im1 = torch.clamp(data['view1']['image'], 0, 1)
         input0 = self.image_processor(im0, return_tensors="pt", do_rescale=False).to(im0.device)
         input1 = self.image_processor(im1, return_tensors="pt", do_rescale=False).to(im1.device)
-        input = {k: torch.cat([input0[k], input1[k]], dim=1) for k in input0.keys()}
-        outputs = self.swinv2(**input)
-        return outputs.last_hidden_state
+        outputs0 = self.swinv2(**input0)
+        outputs1 = self.swinv2(**input1)
+        outputs = torch.cat([outputs0.last_hidden_state, outputs1.last_hidden_state], dim=2)
+        #input = {k: torch.cat([input0[k], input1[k]], dim=1) for k in input0.keys()}
+        #outputs = self.swinv2(**input)
+
+        return outputs
 
 
 class MotionEstimator(nn.Module):
@@ -53,9 +57,10 @@ class MotionEstimator(nn.Module):
         self.attention = nn.MultiheadAttention(embed_dim=config.photo_vo.model.dim_emb, num_heads=8)
 
     def forward(self, image_embs, patch_embs):
-        patch_embs = self.attention(patch_embs, patch_embs, patch_embs)[0]
-        patch_embs = patch_embs.permute(0, 2, 1)
-        x = torch.cat([image_embs, patch_embs], dim=2)
+        #patch_embs = self.attention(patch_embs, patch_embs, patch_embs)[0]
+        #patch_embs = patch_embs.permute(0, 2, 1)
+        #x = torch.cat([image_embs, patch_embs], dim=2)
+        x = image_embs
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
         x = self.fc(x)
