@@ -4,7 +4,7 @@ data:
   path: /home/hudson/data/kitti
   size: 1024
   cycle_every: -1
-  batch_size: 1
+  batch_size: 16
   train_sequences: 
     - "00"
     - "02"
@@ -41,9 +41,7 @@ photo_vo:
       dim_emb: 64
       num_matches: 50
       loss_weights:
-        photometric: 0.0
         pose: 1.0
-        match: 0.0
 train:
     save_every_iter: -1
     log_every_iter: 100
