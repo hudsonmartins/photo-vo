@@ -4,7 +4,7 @@ data:
   path: /home/hudson/data/kitti
   size: 1024
   cycle_every: -1
-  batch_size: 16
+  batch_size: 8
   train_sequences: 
     - "00"
     - "02"
