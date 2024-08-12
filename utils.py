@@ -63,11 +63,9 @@ def debug_batch(data, figs_dpi=100, i=0):
     depth1 = view1.get("depth")
     camera0, camera1 = view0["camera"], view1["camera"]
 
-    #m0 = data["matches0"]
     kpts0_gt, kpts0_1_gt = get_kpts_projection(view0['patches_coords'], depth0, depth1, camera0, camera1, data["T_0to1"])
     kpts1_gt, kpts1_0_gt = get_kpts_projection(view1['patches_coords'], depth1, depth0, camera1, camera0, data["T_1to0"])
     
-    #valid = (m0[i] > -1)
     kpm0, kpm1 = kp0[i].numpy(), kp1[i].numpy()
     images.append(
         [view0["image"][i].permute(1, 2, 0), view1["image"][i].permute(1, 2, 0)]
@@ -101,7 +99,6 @@ def debug_batch(data, figs_dpi=100, i=0):
         pass
     images_projs.append([img_patches0, img_patches1])
         
-
     fig_matches, axes = plot_image_grid(images, return_fig=True, set_lim=True, dpi=figs_dpi)
     if len(heatmaps) > 0:
        plot_heatmaps(heatmaps[i], axes=axes[i], a=1.0)
@@ -124,6 +121,34 @@ def debug_batch(data, figs_dpi=100, i=0):
                                     ['cam0', 'gt_cam1', 'pred_cam1'],
                                     dpi=figs_dpi)
     return {"matches": fig_matches, "projs": fig_projs, "patches": fig_patches, "cameras": fig_cameras}
+
+
+def debug_batch_kitti(data, figs_dpi=100, i=0):
+    images, kpts, matches= [], [], []
+    view0, view1 = data["view0"], data["view1"]    
+
+    view0['image'].detach().cpu().numpy()
+    view1['image'].detach().cpu().numpy()
+    view0['patches_coords'].detach().cpu().numpy()
+    view1['patches_coords'].detach().cpu().numpy()
+    kp0, kp1 = view0['patches_coords'], view1['patches_coords']
+    kpm0, kpm1 = kp0[i].numpy(), kp1[i].numpy()
+    images.append(
+        [view0["image"][i].permute(1, 2, 0), view1["image"][i].permute(1, 2, 0)]
+    )
+    kpts.append([kp0[i], kp1[i]])
+    matches.append((kpm0, kpm1))
+
+    fig_matches, axes = plot_image_grid(images, return_fig=True, set_lim=True, dpi=figs_dpi)
+    plot_keypoints(kpts[i], axes=axes[i], colors="royalblue")
+    plot_matches(*matches[i], color=[0,1,0], axes=axes[i], a=0.5, lw=1.0, ps=0.0)
+
+    data = batch_to_device(data, "cpu", non_blocking=False)
+    origin = torch.tensor([0, 0, 0, 0, 0, 0])
+    fig_cameras = draw_camera_poses([origin, data['gt_vo'][i], data['pred_vo'][i].detach()], 
+                                    ['cam0', 'gt_cam1', 'pred_cam1'],
+                                    dpi=figs_dpi)
+    return {"matches": fig_matches, "cameras": fig_cameras}
 
 
 def draw_camera_poses(poses, labels, dpi=100):
@@ -389,3 +414,30 @@ def matrix_to_euler_angles(matrix: torch.Tensor, convention: str) -> torch.Tenso
         ),
     )
     return torch.stack(o, -1)
+
+def matrix_to_euler(matrix):
+    r = R.from_matrix(matrix)
+    return r.as_euler('zyx', degrees=False)
+
+def euler_to_matrix(euler):
+    r = R.from_euler('zyx', euler, degrees=False)
+    return r.as_matrix()
+
+def kitti_to_6dof(pose):
+    pos = np.array([pose[3], pose[7], pose[11]])
+    matrix = np.array([[pose[0], pose[1], pose[2]],
+                  [pose[4], pose[5], pose[6]],
+                  [pose[8], pose[9], pose[10]]])
+    angles = matrix_to_euler(matrix)
+    return np.concatenate((pos, angles))
+
+def prediction_to_kitti(pose):
+    pos = np.reshape(pose[:3], (3,1))
+    euler = pose[3:]
+    angles = euler_to_matrix(euler)
+    return np.concatenate((angles, pos), axis=1)
+
+def translation_to_skew_symmetric(t):
+    return np.array([[0, -t[2], t[1]],
+                    [t[2], 0, -t[0]],
+                    [-t[1], t[0], 0]])

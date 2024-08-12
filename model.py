@@ -1,4 +1,3 @@
-
 import torch
 from torch import nn
 import gluefactory as gf
@@ -31,21 +30,17 @@ class ImagePairEncoder(nn.Module):
         super(ImagePairEncoder, self).__init__()
         self.image_processor = AutoImageProcessor.from_pretrained("microsoft/swinv2-base-patch4-window8-256")
         self.swinv2 = Swinv2Model.from_pretrained("microsoft/swinv2-base-patch4-window8-256")
-        #self.input_layer = nn.Conv2d(6, 128, kernel_size=(4,4), stride=(4,4))
-        #self.swinv2.embeddings.patch_embeddings.projection = self.input_layer
-        
+        self.input_layer = nn.Conv2d(6, 128, kernel_size=(4,4), stride=(4,4))
+        self.swinv2.embeddings.patch_embeddings.projection = self.input_layer
+                                                
     def forward(self, data):
         im0 = torch.clamp(data['view0']['image'], 0, 1)
         im1 = torch.clamp(data['view1']['image'], 0, 1)
         input0 = self.image_processor(im0, return_tensors="pt", do_rescale=False).to(im0.device)
         input1 = self.image_processor(im1, return_tensors="pt", do_rescale=False).to(im1.device)
-        outputs0 = self.swinv2(**input0)
-        outputs1 = self.swinv2(**input1)
-        outputs = torch.cat([outputs0.last_hidden_state, outputs1.last_hidden_state], dim=2)
-        #input = {k: torch.cat([input0[k], input1[k]], dim=1) for k in input0.keys()}
-        #outputs = self.swinv2(**input)
-
-        return outputs
+        input = {k: torch.cat([input0[k], input1[k]], dim=1) for k in input0.keys()}
+        outputs = self.swinv2(**input)
+        return outputs.last_hidden_state
 
 
 class MotionEstimator(nn.Module):
@@ -57,10 +52,9 @@ class MotionEstimator(nn.Module):
         self.attention = nn.MultiheadAttention(embed_dim=config.photo_vo.model.dim_emb, num_heads=8)
 
     def forward(self, image_embs, patch_embs):
-        #patch_embs = self.attention(patch_embs, patch_embs, patch_embs)[0]
-        #patch_embs = patch_embs.permute(0, 2, 1)
-        #x = torch.cat([image_embs, patch_embs], dim=2)
-        x = image_embs
+        patch_embs = self.attention(patch_embs, patch_embs, patch_embs)[0]
+        patch_embs = patch_embs.permute(0, 2, 1)
+        x = torch.cat([image_embs, patch_embs], dim=2)
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
         x = self.fc(x)
@@ -138,6 +132,15 @@ class PhotoVoModel(nn.Module):
         data['pred_vo'] = output
         return {**data, **self.features}
 
+    def loss_kitti(self, data):
+        pred = data['pred_vo']
+        gt_R = data['T_0to1'].R
+        gt_t = data['T_0to1'].t
+        gt = torch.cat((gt_t, matrix_to_euler_angles(gt_R, "XYZ")), dim=1)
+        pe = pose_error(gt, pred)
+        data['gt_vo'] = gt
+        loss = {'pose_error': pe, 'total': pe}
+        return loss, data
 
     def loss(self, data):
         pred = data['pred_vo']
@@ -196,4 +199,4 @@ class PhotoVoModel(nn.Module):
         
     
 def get_photo_vo_model(config):
-    return PhotoVoModel(config)
+    return PhotoVoModel(config)    
