@@ -1,7 +1,7 @@
 data:
   name: kitti
   seed: 42
-  path: ~/data/kitti
+  path: /home/hudson/data/kitti
   size: 256
   cycle_every: -1
   batch_size: 1
