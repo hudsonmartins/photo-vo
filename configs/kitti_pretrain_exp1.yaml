@@ -1,7 +1,7 @@
 data:
   name: kitti
   seed: 42
-  path: /home/hudson/Desktop/Unicamp/datasets/kitti
+  path: ~/data/kitti
   size: 256
   cycle_every: -1
   batch_size: 1
