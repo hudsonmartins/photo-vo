@@ -2,7 +2,7 @@ data:
   name: kitti
   seed: 42
   path: /home/hudson/data/kitti
-  size: 256
+  size: 1024
   cycle_every: -1
   batch_size: 1
   train_sequences: 
@@ -12,7 +12,7 @@ data:
     - "09"
   val_sequences:
     - "03"
-  val_size: 5
+  val_size: 256
   max_skip: 5
 features_model:
     name: two_view_pipeline
