@@ -125,6 +125,8 @@ def debug_batch(data, figs_dpi=100, i=0):
 
 def debug_batch_kitti(data, figs_dpi=100, i=0):
     images, kpts, matches= [], [], []
+    data = batch_to_device(data, "cpu", non_blocking=False)
+
     view0, view1 = data["view0"], data["view1"]    
 
     view0['image'].detach().cpu().numpy()
@@ -143,7 +145,6 @@ def debug_batch_kitti(data, figs_dpi=100, i=0):
     plot_keypoints(kpts[i], axes=axes[i], colors="royalblue")
     plot_matches(*matches[i], color=[0,1,0], axes=axes[i], a=0.5, lw=1.0, ps=0.0)
 
-    data = batch_to_device(data, "cpu", non_blocking=False)
     origin = torch.tensor([0, 0, 0, 0, 0, 0])
     fig_cameras = draw_camera_poses([origin, data['gt_vo'][i], data['pred_vo'][i].detach()], 
                                     ['cam0', 'gt_cam1', 'pred_cam1'],
