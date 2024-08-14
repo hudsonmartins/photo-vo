@@ -5,6 +5,9 @@ from PIL import ImageFile, Image
 from pathlib import Path
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
+#kitti pose mean and std
+KITT_MEAN = [-8.6736e-5, -1.6038e-2, 9.0033e-1, 1.7061e-5, 9.5582e-4, -5.5258e-5]
+KITTI_STD = [2.5584e-2, 1.8545e-2, 3.0352e-1, 2.8256e-3, 1.7771e-2, 3.2326e-3]
 
 def get_iterator(data_path, size, cycle_every, batch_size, sequences_names, max_skip):
     random_seed = 42
@@ -72,6 +75,8 @@ class Dataset():
 
             pose2_to_1 = np.dot(np.linalg.inv(pose1), pose2)
             y = kitti_to_6dof(pose2_to_1[:3].reshape(-1))
+            #normalize
+            y = (y - KITT_MEAN) / KITTI_STD
             
             imgs.append(np.array([x1, x2]))
             ys.append(y)

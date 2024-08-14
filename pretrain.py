@@ -62,7 +62,7 @@ def do_evaluation(val_loader, val_size, model, device, n_images=5):
             break
     if avg_losses is None:
         return None
-    avg_losses = {k: v / val_size for k, v in avg_losses.items()}
+    avg_losses = {k: v.mean() for k, v in avg_losses.items()}
 
     return avg_losses, all_figs
 
@@ -100,17 +100,17 @@ def train(model, train_loader, val_loader, optimizer, device, config):
             model.eval()
             val_loss, figs = do_evaluation(val_loader, config.data.val_size, model, device)
             if val_loss:
-                logger.info(f"Validation loss at iteration {it}: {val_loss['total'].mean()}")
+                logger.info(f"Validation loss at iteration {it}: {val_loss['total']}")
                 for k, v in val_loss.items():
-                    writer.add_scalar(f"val/loss/{k}", v.mean(), it)
+                    writer.add_scalar(f"val/loss/{k}", v, it)
                 for k, v in figs.items():
                     if(v):
                         writer.add_figure("val/fig/" + k, v, it)
 
-                if val_loss['total'].mean() < config.train.best_loss:
-                    best_loss = val_loss['total'].mean().item()
+                if val_loss['total'] < config.train.best_loss:
+                    best_loss = val_loss['total'].item()
                     config.train.best_loss = best_loss
-                    logger.info(f"New best model with loss {val_loss['total'].mean()}. Saving checkpoint.")
+                    logger.info(f"New best model with loss {val_loss['total']}. Saving checkpoint.")
                     torch.save({
                         "model": model.state_dict(),
                         "optimizer": optimizer.state_dict(),
