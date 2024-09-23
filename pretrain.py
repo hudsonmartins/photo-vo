@@ -167,9 +167,15 @@ def main(args):
             logger.info(f"Overriding learning rate from {optimizer.param_groups[0]['lr']} to {conf.train.lr}")
             for param_group in optimizer.param_groups:
                 param_group['lr'] = conf.train.lr
+    
+    #freeze ImagePairEncoder layers
+    for param in model.imgenc.parameters():
+        param.requires_grad = False
+    print('model trainable ', sum(p.numel() for p in model.parameters() if p.requires_grad))
+    
 
     logger.info(f"Training with sequences {conf.data.train_sequences} and validation with {conf.data.val_sequences}")
-    train(model, train_loader, val_loader, optimizer, device, conf)
+    #train(model, train_loader, val_loader, optimizer, device, conf)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
