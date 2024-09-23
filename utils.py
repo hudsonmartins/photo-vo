@@ -127,23 +127,24 @@ def debug_batch_kitti(data, figs_dpi=100, i=0):
     images, kpts, matches= [], [], []
     data = batch_to_device(data, "cpu", non_blocking=False)
 
-    view0, view1 = data["view0"], data["view1"]    
+    # view0, view1 = data["view0"], data["view1"]    
 
-    view0['image'].detach().cpu().numpy()
-    view1['image'].detach().cpu().numpy()
-    view0['patches_coords'].detach().cpu().numpy()
-    view1['patches_coords'].detach().cpu().numpy()
-    kp0, kp1 = view0['patches_coords'], view1['patches_coords']
-    kpm0, kpm1 = kp0[i].numpy(), kp1[i].numpy()
-    images.append(
-        [view0["image"][i].permute(1, 2, 0), view1["image"][i].permute(1, 2, 0)]
-    )
-    kpts.append([kp0[i], kp1[i]])
-    matches.append((kpm0, kpm1))
+    # view0['image'].detach().cpu().numpy()
+    # view1['image'].detach().cpu().numpy()
+    fig_matches = {}
+    # view0['patches_coords'].detach().cpu().numpy()
+    # view1['patches_coords'].detach().cpu().numpy()
+    # kp0, kp1 = view0['patches_coords'], view1['patches_coords']
+    # kpm0, kpm1 = kp0[i].numpy(), kp1[i].numpy()
+    # images.append(
+    #     [view0["image"][i].permute(1, 2, 0), view1["image"][i].permute(1, 2, 0)]
+    # )
+    # kpts.append([kp0[i], kp1[i]])
+    # matches.append((kpm0, kpm1))
 
-    fig_matches, axes = plot_image_grid(images, return_fig=True, set_lim=True, dpi=figs_dpi)
-    plot_keypoints(kpts[i], axes=axes[i], colors="royalblue")
-    plot_matches(*matches[i], color=[0,1,0], axes=axes[i], a=0.5, lw=1.0, ps=0.0)
+    # fig_matches, axes = plot_image_grid(images, return_fig=True, set_lim=True, dpi=figs_dpi)
+    # plot_keypoints(kpts[i], axes=axes[i], colors="royalblue")
+    # plot_matches(*matches[i], color=[0,1,0], axes=axes[i], a=0.5, lw=1.0, ps=0.0)
 
     origin = torch.tensor([0, 0, 0, 0, 0, 0])
     fig_cameras = draw_camera_poses([origin, data['gt_vo'][i], data['pred_vo'][i].detach()], 
