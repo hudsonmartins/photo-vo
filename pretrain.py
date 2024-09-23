@@ -175,7 +175,7 @@ def main(args):
     
 
     logger.info(f"Training with sequences {conf.data.train_sequences} and validation with {conf.data.val_sequences}")
-    #train(model, train_loader, val_loader, optimizer, device, conf)
+    train(model, train_loader, val_loader, optimizer, device, conf)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
