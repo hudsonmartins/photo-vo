@@ -10,7 +10,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 KITT_MEAN = [-8.6736e-5, -1.6038e-2, 9.0033e-1, 1.7061e-5, 9.5582e-4, -5.5258e-5]
 KITTI_STD = [2.5584e-2, 1.8545e-2, 3.0352e-1, 2.8256e-3, 1.7771e-2, 3.2326e-3]
 
-def get_iterator(data_path, size, cycle_every, batch_size, sequences_names, max_skip):
+def get_iterator(data_path, size, batch_size, sequences_names, max_skip):
     random_seed = 42
     rand = np.random.RandomState(random_seed)
     preprocess = transforms.Compose([
@@ -19,13 +19,12 @@ def get_iterator(data_path, size, cycle_every, batch_size, sequences_names, max_
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
     return Dataset(preprocess, data_path, batch_size=batch_size,
-                   rand=rand, sequences_names=sequences_names, max_skip=max_skip,
-                   cycle_every=cycle_every)
+                   rand=rand, sequences_names=sequences_names, max_skip=max_skip)
 
 
 class Dataset():
     def __init__(self, preprocess, data_path, batch_size, rand, sequences_names,
-                 max_skip=5, cycle_every=None):
+                 max_skip=5):
         self.preprocess = preprocess
         self._ys = [self._load_poses(data_path, sequence) for sequence in sequences_names]
         self._batch_size = batch_size
@@ -33,7 +32,6 @@ class Dataset():
         self._rand_state = self._rand.get_state()
         self._data_path = Path(data_path)
         self.sequences_names = sequences_names
-        self._cycle_every = cycle_every
         self._n_iterations = 0
         self._sequences = list(range(len(self._ys)))
         self._max_skip = max_skip
@@ -59,9 +57,6 @@ class Dataset():
         return img1, img2
 
     def get_batch(self):
-        if self._cycle_every and self._n_iterations and self._n_iterations % self._cycle_every == 0:
-            self.reset()
-
         imgs, ys = [], []
         for _ in range(self._batch_size):
             sequence = int(self._rand.choice(self._sequences))
@@ -99,8 +94,7 @@ if __name__ == '__main__':
     matplotlib.use('TkAgg')  # Switch to an interactive backend like TkAgg
 
     it = get_iterator('/home/hudson/Desktop/Unicamp/datasets/kitti/', size=(512,512),
-                      cycle_every=None, batch_size=1,
-                      sequences_names=['03'], max_skip=1)
+                      batch_size=1, sequences_names=['03'], max_skip=1)
     for x, y in it.iterate():
         print(x.shape, y)
         print(x)

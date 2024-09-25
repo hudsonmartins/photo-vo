@@ -150,9 +150,9 @@ def main(args):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(conf.data.seed)
 
-    train_loader = get_iterator(conf.data.path, conf.data.size, None, conf.data.batch_size,
+    train_loader = get_iterator(conf.data.path, conf.data.size, conf.data.batch_size,
                            conf.data.train_sequences, conf.data.max_skip)
-    val_loader = get_iterator(conf.data.path, conf.data.size, 5, conf.data.batch_size,
+    val_loader = get_iterator(conf.data.path, conf.data.size, conf.data.batch_size,
                            conf.data.val_sequences, 1)
 
     os.makedirs(args.experiment, exist_ok=True)
