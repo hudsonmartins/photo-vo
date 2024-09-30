@@ -11,8 +11,11 @@ from omegaconf import OmegaConf
 from gluefactory.geometry.wrappers import Pose
 
 from kitti import get_iterator
-from model import get_photo_vo_model
+#from model import get_photo_vo_model
+from model_tsformer import build_model
 from utils import batch_to_device, debug_batch_kitti
+from loss import pose_error
+
 
 # Setup logging
 logger = logging.getLogger("kitti_train")
@@ -65,6 +68,54 @@ def do_evaluation(val_loader, val_size, model, device, n_images=5):
     avg_losses = {k: v.mean() for k, v in avg_losses.items()}
 
     return avg_losses, all_figs
+
+
+def train_tsformer(model, train_loader, val_loader, optimizer, device, config):
+    writer = SummaryWriter(log_dir=config.train.tensorboard_dir)
+    loss_sum = 0
+    for it, (images, poses) in enumerate(tqdm(train_loader.iterate())):
+        model.train()
+        optimizer.zero_grad()
+        images = images.transpose(1, 2).to(device)
+        poses = poses.to(device)
+
+        output = model(images)
+        loss = pose_error(poses, output)
+        loss.mean().backward()
+        optimizer.step()
+        loss_sum += loss.mean().item()
+
+        if it % config.train.log_every_iter == 0:
+            logger.info(f"Iteration {it}, Loss: {loss_sum / config.train.log_every_iter}")
+            writer.add_scalar("train/loss/total", loss_sum / config.train.log_every_iter, it)
+        
+        if it % config.train.eval_every_iter == 0:
+            logger.info(f"Starting validation at iteration {it}")
+            model.eval()
+            val_loss = 0
+            for val_it, (images, poses) in enumerate(tqdm(val_loader.iterate())):
+                images = images.transpose(1, 2).to(device)
+                poses = poses.to(device)
+                output = model(images)
+                loss = pose_error(poses, output)
+                val_loss += loss.mean().item()
+                if val_it > config.data.val_size:
+                    break
+            val_loss /= config.data.val_size
+            logger.info(f"Validation loss at iteration {it}: {val_loss}")
+            writer.add_scalar("val/loss/total", val_loss, it)
+            loss_sum = 0
+
+            if val_loss < config.train.best_loss:
+                best_loss = val_loss
+                config.train.best_loss = best_loss
+                logger.info(f"New best model with loss {val_loss}. Saving checkpoint.")
+                torch.save({
+                    "model": model.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                    "config": OmegaConf.to_container(config, resolve=True),
+                }, os.path.join(args.experiment, "best_model.tar"))
+
 
 def train(model, train_loader, val_loader, optimizer, device, config):
     writer = SummaryWriter(log_dir=config.train.tensorboard_dir)
@@ -125,6 +176,7 @@ def train(model, train_loader, val_loader, optimizer, device, config):
                 "config": OmegaConf.to_container(config, resolve=True),
             }, os.path.join(args.experiment, f"checkpoint_{it}.tar"))
 
+
 def main(args):
     conf = OmegaConf.load(args.conf)
     conf.train = OmegaConf.merge(default_train_conf, conf.train)
@@ -156,7 +208,33 @@ def main(args):
                            conf.data.val_sequences, 1)
 
     os.makedirs(args.experiment, exist_ok=True)
-    model = get_photo_vo_model(conf)
+    
+    
+    model_args = {
+        "window_size": 2,  # number of frames in window
+      	"pretrained_ViT": False,  # load weights from pre-trained ViT
+        "checkpoint_path": "checkpoints_tsformer/",  # path to save checkpoint
+        "checkpoint": None,  # checkpoint
+    }
+
+    model_params = {
+        "dim": 384,
+        "image_size": (192, 640),  #(192, 640),
+        "patch_size": 16,
+        "attention_type": 'divided_space_time',  # ['divided_space_time', 'space_only','joint_space_time', 'time_only']
+        "num_frames": model_args["window_size"],
+        "num_classes": 6 * (model_args["window_size"] - 1),  # 6 DoF for each frame
+        "depth": 12,
+        "heads": 6,
+        "dim_head": 64,
+        "attn_dropout": 0.1,
+        "ff_dropout": 0.1,
+        "time_only": False,
+    }
+    
+    
+    model, model_args = build_model(model_args, model_params)
+    #model = get_photo_vo_model(conf)
     optimizer = optimizer_fn(model.parameters(), lr=conf.train.lr, **conf.train.optimizer_options)
     model.to(device)
 
@@ -168,12 +246,9 @@ def main(args):
             for param_group in optimizer.param_groups:
                 param_group['lr'] = conf.train.lr
     
-    #freeze ImagePairEncoder layers
-    #for param in model.imgenc.parameters():
-    #    param.requires_grad = False    
-
     logger.info(f"Training with sequences {conf.data.train_sequences} and validation with {conf.data.val_sequences}")
-    train(model, train_loader, val_loader, optimizer, device, conf)
+    #train(model, train_loader, val_loader, optimizer, device, conf)
+    train_tsformer(model, train_loader, val_loader, optimizer, device, conf)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

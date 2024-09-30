@@ -1,6 +1,7 @@
 import os
 import sys
 import yaml
+import cv2
 import torch
 import importlib
 import argparse
@@ -9,8 +10,14 @@ from omegaconf import OmegaConf
 from model import get_photo_vo_model
 from utils import euler_angles_to_matrix
 from gluefactory.utils.image import numpy_image_to_torch, ImagePreprocessor
+from torchvision import transforms
 
 from modvo.vo.tracker import Tracker
+
+#kitti pose mean and std
+KITT_MEAN = [-8.6736e-5, -1.6038e-2, 9.0033e-1, 1.7061e-5, 9.5582e-4, -5.5258e-5]
+KITTI_STD = [2.5584e-2, 1.8545e-2, 3.0352e-1, 2.8256e-3, 1.7771e-2, 3.2326e-3]
+
 
 class PhotoVOTracker(Tracker):
     def __init__(self, **params):
@@ -19,30 +26,31 @@ class PhotoVOTracker(Tracker):
         self.index = 0
         self.img0, self.img1 = None, None
         self.photo_vo_model = self.load_model(params['path'])
-        
 
     def load_model(self, model_path):
         cp = torch.load(model_path)
-        model = get_photo_vo_model(OmegaConf.create(cp["conf"]))
+        model = get_photo_vo_model(OmegaConf.create(cp["config"]))
         model.load_state_dict(cp["model"], strict=False)
         model.eval()
         model.to(self.device)
-        self.preprocessor = ImagePreprocessor(OmegaConf.create(cp["conf"]["data"]["preprocessing"]))
+        #self.preprocessor = ImagePreprocessor(OmegaConf.create(cp["config"]["data"]["preprocessing"]))
         return model
     
     def get_input(self):
-        im0_torch = numpy_image_to_torch(self.img0)
-        im1_torch = numpy_image_to_torch(self.img1)
-        im0 = self.preprocessor(im0_torch)['image']
-        im1 = self.preprocessor(im1_torch)['image']
+        preprocess = transforms.Compose([
+                        transforms.Resize((256,256)),
+                        transforms.ToTensor(),
+                        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+                    ])
+        
         return {
-                'view0': {
-                    'image': torch.unsqueeze(im0, 0).to(self.device),
-                },
-                'view1': {
-                    'image': torch.unsqueeze(im1, 0).to(self.device),
+                    'view0': {
+                        'image': torch.unsqueeze(preprocess(self.img0), 0).to(self.device),
+                    },
+                    'view1': {
+                        'image': torch.unsqueeze(preprocess(self.img1), 0).to(self.device),
+                    }
                 }
-            }
 
     
     def track(self, image):
@@ -55,6 +63,7 @@ class PhotoVOTracker(Tracker):
                 self.img1 = image
                 data = self.get_input()
                 vo = self.photo_vo_model(data)['pred_vo'][0]
+                vo = vo * torch.tensor(KITTI_STD).to(self.device) + torch.tensor(KITT_MEAN).to(self.device)
                 t = vo[:3].reshape(3, 1).detach().cpu().numpy()
                 R = euler_angles_to_matrix(vo[3:], "XYZ").reshape(3, 3).detach().cpu().numpy()
                 
@@ -105,8 +114,9 @@ def main(args):
             break
         if(image is None):
             continue
-        print('img shape ', image.shape)
+        print('img ', image.size)
         R, t = vo.track(image)
+        
         
         if args.enable_gui:
             f = Frame(image)
