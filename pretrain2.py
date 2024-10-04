@@ -88,15 +88,15 @@ def train_tsformer(model, train_loader, val_loader, optimizer, device, config):
             loss_sum += loss.mean().item()
 
             if it % config.train.log_every_iter == 0 and it > 0:
-                logger.info(f"Iteration {it}, Loss: {loss_sum / config.train.log_every_iter}")
-                writer.add_scalar("train/loss/total", loss_sum / config.train.log_every_iter, it)
+                logger.info(f"Epoch {i}, Iteration {it}, Loss: {loss_sum / config.train.log_every_iter}")
+                writer.add_scalar("train/loss/total", loss_sum / config.train.log_every_iter, i*len(train_loader) + it)
                 origin = torch.tensor([0, 0, 0, 0, 0, 0])
                 fig_cameras = draw_camera_poses([origin, poses[0].detach().cpu().numpy(), output[0].detach().cpu().numpy()],
                                                 ["origin", "gt", "pred"], dpi=700)
-                writer.add_figure("train/fig/cameras", fig_cameras, it)
+                writer.add_figure("train/fig/cameras", fig_cameras, i*len(train_loader) + it)
                     
             if it % config.train.eval_every_iter == 0 and it > 0:
-                logger.info(f"Starting validation at iteration {it}")
+                logger.info(f"Starting validation at epoch {i}, iteration {it}")
                 model.eval()
                 val_loss = 0
                 for val_it, (images, poses) in enumerate(tqdm(val_loader)):
@@ -108,12 +108,12 @@ def train_tsformer(model, train_loader, val_loader, optimizer, device, config):
                     if val_it > config.data.val_size:
                         break
                 val_loss /= config.data.val_size
-                logger.info(f"Validation loss at iteration {it}: {val_loss}")
-                writer.add_scalar("val/loss/total", val_loss, it)
+                logger.info(f"Validation loss at epoch {i}, iteration {it}: {val_loss}")
+                writer.add_scalar("val/loss/total", val_loss, i*len(train_loader) + it)
                 origin = torch.tensor([0, 0, 0, 0, 0, 0])
                 fig_cameras = draw_camera_poses([origin, poses[0].detach().cpu().numpy(), output[0].detach().cpu().numpy()],
                                                 ["origin", "gt", "pred"], dpi=700)
-                writer.add_figure("val/fig/cameras", fig_cameras, it)
+                writer.add_figure("val/fig/cameras", fig_cameras, i*len(train_loader) + it)
                 loss_sum = 0
 
                 if val_loss < config.train.best_loss:
