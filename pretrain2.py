@@ -73,56 +73,58 @@ def do_evaluation(val_loader, val_size, model, device, n_images=5):
 def train_tsformer(model, train_loader, val_loader, optimizer, device, config):
     writer = SummaryWriter(log_dir=config.train.tensorboard_dir)
     loss_sum = 0
-    for it, (images, poses) in enumerate(tqdm(train_loader)):
-        model.train()
-        optimizer.zero_grad()
-        images = images.to(device)
-        poses = poses.to(device)
+    for i in range(config.train.epochs):
+        logger.info(f"Starting epoch {i}")
+        for it, (images, poses) in enumerate(tqdm(train_loader)):
+            model.train()
+            optimizer.zero_grad()
+            images = images.to(device)
+            poses = poses.to(device)
 
-        output = model(images)
-        loss = pose_error(poses, output)
-        loss.mean().backward()
-        optimizer.step()
-        loss_sum += loss.mean().item()
+            output = model(images)
+            loss = pose_error(poses, output)
+            loss.mean().backward()
+            optimizer.step()
+            loss_sum += loss.mean().item()
 
-        if it % config.train.log_every_iter == 0:
-            logger.info(f"Iteration {it}, Loss: {loss_sum / config.train.log_every_iter}")
-            writer.add_scalar("train/loss/total", loss_sum / config.train.log_every_iter, it)
-            origin = torch.tensor([0, 0, 0, 0, 0, 0])
-            fig_cameras = draw_camera_poses([origin, poses[0].detach().cpu().numpy(), output[0].detach().cpu().numpy()],
-                                            ["origin", "gt", "pred"], dpi=700)
-            writer.add_figure("train/fig/cameras", fig_cameras, it)
-                
-        if it % config.train.eval_every_iter == 0:
-            logger.info(f"Starting validation at iteration {it}")
-            model.eval()
-            val_loss = 0
-            for val_it, (images, poses) in enumerate(tqdm(val_loader)):
-                images = images.to(device)
-                poses = poses.to(device)
-                output = model(images)
-                loss = pose_error(poses, output)
-                val_loss += loss.mean().item()
-                if val_it > config.data.val_size:
-                    break
-            val_loss /= config.data.val_size
-            logger.info(f"Validation loss at iteration {it}: {val_loss}")
-            writer.add_scalar("val/loss/total", val_loss, it)
-            origin = torch.tensor([0, 0, 0, 0, 0, 0])
-            fig_cameras = draw_camera_poses([origin, poses[0].detach().cpu().numpy(), output[0].detach().cpu().numpy()],
-                                            ["origin", "gt", "pred"], dpi=700)
-            writer.add_figure("val/fig/cameras", fig_cameras, it)
-            loss_sum = 0
+            if it % config.train.log_every_iter == 0 and it > 0:
+                logger.info(f"Iteration {it}, Loss: {loss_sum / config.train.log_every_iter}")
+                writer.add_scalar("train/loss/total", loss_sum / config.train.log_every_iter, it)
+                origin = torch.tensor([0, 0, 0, 0, 0, 0])
+                fig_cameras = draw_camera_poses([origin, poses[0].detach().cpu().numpy(), output[0].detach().cpu().numpy()],
+                                                ["origin", "gt", "pred"], dpi=700)
+                writer.add_figure("train/fig/cameras", fig_cameras, it)
+                    
+            if it % config.train.eval_every_iter == 0 and it > 0:
+                logger.info(f"Starting validation at iteration {it}")
+                model.eval()
+                val_loss = 0
+                for val_it, (images, poses) in enumerate(tqdm(val_loader)):
+                    images = images.to(device)
+                    poses = poses.to(device)
+                    output = model(images)
+                    loss = pose_error(poses, output)
+                    val_loss += loss.mean().item()
+                    if val_it > config.data.val_size:
+                        break
+                val_loss /= config.data.val_size
+                logger.info(f"Validation loss at iteration {it}: {val_loss}")
+                writer.add_scalar("val/loss/total", val_loss, it)
+                origin = torch.tensor([0, 0, 0, 0, 0, 0])
+                fig_cameras = draw_camera_poses([origin, poses[0].detach().cpu().numpy(), output[0].detach().cpu().numpy()],
+                                                ["origin", "gt", "pred"], dpi=700)
+                writer.add_figure("val/fig/cameras", fig_cameras, it)
+                loss_sum = 0
 
-            if val_loss < config.train.best_loss:
-                best_loss = val_loss
-                config.train.best_loss = best_loss
-                logger.info(f"New best model with loss {val_loss}. Saving checkpoint.")
-                torch.save({
-                    "model": model.state_dict(),
-                    "optimizer": optimizer.state_dict(),
-                    "config": OmegaConf.to_container(config, resolve=True),
-                }, os.path.join(args.experiment, "best_model.tar"))
+                if val_loss < config.train.best_loss:
+                    best_loss = val_loss
+                    config.train.best_loss = best_loss
+                    logger.info(f"New best model with loss {val_loss}. Saving checkpoint.")
+                    torch.save({
+                        "model": model.state_dict(),
+                        "optimizer": optimizer.state_dict(),
+                        "config": OmegaConf.to_container(config, resolve=True),
+                    }, os.path.join(args.experiment, "best_model.tar"))
 
 
 def train(model, train_loader, val_loader, optimizer, device, config):
