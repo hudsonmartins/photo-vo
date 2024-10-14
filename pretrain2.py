@@ -69,8 +69,13 @@ def do_evaluation(val_loader, val_size, model, device, n_images=5):
 
     return avg_losses, all_figs
 
+def compute_loss(pred, gt, criterion):
+    loss = criterion(pred, gt.float())
+    return loss
+
 
 def train_tsformer(model, train_loader, val_loader, optimizer, device, config):
+    criterion = torch.nn.MSELoss()
     writer = SummaryWriter(log_dir=config.train.tensorboard_dir)
     loss_sum = 0
     for i in range(config.train.epochs):
@@ -82,10 +87,12 @@ def train_tsformer(model, train_loader, val_loader, optimizer, device, config):
             poses = poses.to(device)
 
             output = model(images)
-            loss = pose_error(poses, output)
-            loss.mean().backward()
+            loss = compute_loss(output, poses, criterion)
+            #loss = pose_error(poses, output)
+
+            loss.backward()
             optimizer.step()
-            loss_sum += loss.mean().item()
+            loss_sum += loss.item()
 
             if it % config.train.log_every_iter == 0 and it > 0:
                 logger.info(f"Epoch {i}, Iteration {it}, Loss: {loss_sum / config.train.log_every_iter}")
@@ -103,8 +110,9 @@ def train_tsformer(model, train_loader, val_loader, optimizer, device, config):
                     images = images.to(device)
                     poses = poses.to(device)
                     output = model(images)
-                    loss = pose_error(poses, output)
-                    val_loss += loss.mean().item()
+                    #loss = pose_error(poses, output)
+                    loss = compute_loss(output, poses, criterion)
+                    val_loss += loss.item()
                     if val_it > config.data.val_size:
                         break
                 val_loss /= config.data.val_size
