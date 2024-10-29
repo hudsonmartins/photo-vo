@@ -13,7 +13,8 @@ def get_iterator(data_path, size, batch_size, sequences_names, max_skip):
     preprocess = transforms.Compose([
         transforms.Resize(size),
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        transforms.Normalize(mean=[0.34721234, 0.36705238, 0.36066107],
+                            std=[0.30737526, 0.31515116, 0.32020183])
     ])
     
     
