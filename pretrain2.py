@@ -42,7 +42,7 @@ default_train_conf = {
 default_train_conf = OmegaConf.create(default_train_conf)
 
 def do_evaluation(val_loader, val_size, model, device, n_images=5):
-    avg_losses = None
+    avg_losses = {}
     all_figs = {}
 
     for it, (images, poses) in enumerate(tqdm(val_loader, total=val_size)):
@@ -63,16 +63,15 @@ def do_evaluation(val_loader, val_size, model, device, n_images=5):
 
         if(it>=val_size):
             break
-    if avg_losses is None:
-        return None
-    avg_losses = {k: v.mean() for k, v in avg_losses.items()}
+    if not avg_losses:
+        return None, None
+    avg_losses = {k: v / val_size for k, v in avg_losses.items()}
 
     return avg_losses, all_figs
 
 def compute_loss(pred, gt, criterion):
     loss = criterion(pred, gt.float())
     return loss
-
 
 def train_tsformer(model, train_loader, val_loader, optimizer, device, config):
     criterion = torch.nn.MSELoss()
@@ -98,7 +97,8 @@ def train_tsformer(model, train_loader, val_loader, optimizer, device, config):
                 logger.info(f"Epoch {i}, Iteration {it}, Loss: {loss_sum / config.train.log_every_iter}")
                 writer.add_scalar("train/loss/total", loss_sum / config.train.log_every_iter, i*len(train_loader) + it)
                 origin = torch.tensor([0, 0, 0, 0, 0, 0])
-                fig_cameras = draw_camera_poses([origin, poses[0].detach().cpu().numpy(), output[0].detach().cpu().numpy()],
+                fig_cameras = draw_camera_poses([origin[3:], poses[0,3:].detach().cpu(), output[0,3:].detach().cpu()],
+                                                [origin[:3], poses[0,:3].detach().cpu(), output[0,:3].detach().cpu()],
                                                 ["origin", "gt", "pred"], dpi=700)
                 writer.add_figure("train/fig/cameras", fig_cameras, i*len(train_loader) + it)
                     
@@ -119,7 +119,8 @@ def train_tsformer(model, train_loader, val_loader, optimizer, device, config):
                 logger.info(f"Validation loss at epoch {i}, iteration {it}: {val_loss}")
                 writer.add_scalar("val/loss/total", val_loss, i*len(train_loader) + it)
                 origin = torch.tensor([0, 0, 0, 0, 0, 0])
-                fig_cameras = draw_camera_poses([origin, poses[0].detach().cpu().numpy(), output[0].detach().cpu().numpy()],
+                fig_cameras = draw_camera_poses([origin[3:], poses[0,3:].detach().cpu(), output[0,3:].detach().cpu()],
+                                                [origin[:3], poses[0,:3].detach().cpu(), output[0,:3].detach().cpu()],
                                                 ["origin", "gt", "pred"], dpi=700)
                 writer.add_figure("val/fig/cameras", fig_cameras, i*len(train_loader) + it)
                 loss_sum = 0
@@ -133,66 +134,6 @@ def train_tsformer(model, train_loader, val_loader, optimizer, device, config):
                         "optimizer": optimizer.state_dict(),
                         "config": OmegaConf.to_container(config, resolve=True),
                     }, os.path.join(args.experiment, "best_model.tar"))
-
-
-def train(model, train_loader, val_loader, optimizer, device, config):
-    writer = SummaryWriter(log_dir=config.train.tensorboard_dir)
-    for it, (images, poses) in enumerate(tqdm(train_loader)):
-        model.train()
-        optimizer.zero_grad()
-        # Prepare data
-        data = {'view0': {'image': images[:, 0], 'depth': None, 'camera': None},
-                'view1': {'image': images[:, 1], 'depth': None, 'camera': None},
-                'T_0to1': Pose.from_Rt(torch.eye(3).repeat(images.shape[0], 1, 1), poses[:, :3])}
-        
-        data = batch_to_device(data, device)
-        output = model(data)
-        loss, output = model.loss_kitti(output)
-        if torch.isnan(loss['total']).any():
-            logger.info(f"Detected NAN, skipping iteration {it}")
-            continue
-
-        loss['total'].mean().backward()
-        optimizer.step()
-
-        if it % config.train.log_every_iter == 0:
-            logger.info(f"Iteration {it}, Loss: {loss['total'].mean()}")
-            for k, v in loss.items():
-                writer.add_scalar(f"train/loss/{k}", v.mean(), it)
-            figs = debug_batch_kitti(output, figs_dpi=700)
-            for k, v in figs.items():
-                if(v):
-                    writer.add_figure("train/fig/" + k, v, it)
-
-        if it % config.train.eval_every_iter == 0:
-            logger.info(f"Starting validation at iteration {it}")
-            model.eval()
-            val_loss, figs = do_evaluation(val_loader, config.data.val_size, model, device)
-            if val_loss:
-                logger.info(f"Validation loss at iteration {it}: {val_loss['total']}")
-                for k, v in val_loss.items():
-                    writer.add_scalar(f"val/loss/{k}", v, it)
-                for k, v in figs.items():
-                    if(v):
-                        writer.add_figure("val/fig/" + k, v, it)
-
-                if val_loss['total'] < config.train.best_loss:
-                    best_loss = val_loss['total'].item()
-                    config.train.best_loss = best_loss
-                    logger.info(f"New best model with loss {val_loss['total']}. Saving checkpoint.")
-                    torch.save({
-                        "model": model.state_dict(),
-                        "optimizer": optimizer.state_dict(),
-                        "config": OmegaConf.to_container(config, resolve=True),
-                    }, os.path.join(args.experiment, "best_model.tar"))
-
-        if config.train.save_every_iter > 0 and it % config.train.save_every_iter == 0:
-            logger.info(f"Saving checkpoint at iteration {it}")
-            torch.save({
-                "model": model.state_dict(),
-                "optimizer": optimizer.state_dict(),
-                "config": OmegaConf.to_container(config, resolve=True),
-            }, os.path.join(args.experiment, f"checkpoint_{it}.tar"))
 
 
 def main(args):
@@ -237,7 +178,7 @@ def main(args):
 
     model_params = {
         "dim": 384,
-        "image_size": (192, 640),  #(192, 640),
+        "image_size": (192, 640), 
         "patch_size": 16,
         "attention_type": 'divided_space_time',  # ['divided_space_time', 'space_only','joint_space_time', 'time_only']
         "num_frames": model_args["window_size"],

@@ -257,6 +257,8 @@ if __name__ == "__main__":
 
     # Test dataloader
     for i, (imgs, y) in enumerate(test_loader):
+        print(imgs)
+        print(y)
         print(imgs.shape)
         print(y.shape)
         break

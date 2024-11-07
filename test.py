@@ -15,8 +15,8 @@ from torchvision import transforms
 from modvo.vo.tracker import Tracker
 
 #kitti pose mean and std
-KITT_MEAN = [-8.6736e-5, -1.6038e-2, 9.0033e-1, 1.7061e-5, 9.5582e-4, -5.5258e-5]
-KITTI_STD = [2.5584e-2, 1.8545e-2, 3.0352e-1, 2.8256e-3, 1.7771e-2, 3.2326e-3]
+KITT_MEAN = [1.7061e-5, 9.5582e-4, -5.5258e-5, -8.6736e-5, -1.6038e-2, 9.0033e-1]
+KITTI_STD = [2.8256e-3, 1.7771e-2, 3.2326e-3, 2.5584e-2, 1.8545e-2, 3.0352e-1]
 
 
 class PhotoVOTracker(Tracker):
@@ -38,9 +38,10 @@ class PhotoVOTracker(Tracker):
     
     def get_input(self):
         preprocess = transforms.Compose([
-                        transforms.Resize((256,256)),
+                        transforms.Resize((192, 640)),
                         transforms.ToTensor(),
-                        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+                        transforms.Normalize(mean=[0.34721234, 0.36705238, 0.36066107],
+                                            std=[0.30737526, 0.31515116, 0.32020183])
                     ])
         
         return {
@@ -64,8 +65,8 @@ class PhotoVOTracker(Tracker):
                 data = self.get_input()
                 vo = self.photo_vo_model(data)['pred_vo'][0]
                 vo = vo * torch.tensor(KITTI_STD).to(self.device) + torch.tensor(KITT_MEAN).to(self.device)
-                t = vo[:3].reshape(3, 1).detach().cpu().numpy()
-                R = euler_angles_to_matrix(vo[3:], "XYZ").reshape(3, 3).detach().cpu().numpy()
+                t = vo[3:].reshape(3, 1).detach().cpu().numpy()
+                R = euler_angles_to_matrix(vo[:3], "ZYX").reshape(3, 3).detach().cpu().numpy()
                 
                 self.t = self.t + self.R.dot(t)
                 self.R = R.dot(self.R)
@@ -116,7 +117,6 @@ def main(args):
             continue
         print('img ', image.size)
         R, t = vo.track(image)
-        
         
         if args.enable_gui:
             f = Frame(image)

@@ -153,15 +153,15 @@ def debug_batch_kitti(data, figs_dpi=100, i=0):
     return {"matches": fig_matches, "cameras": fig_cameras}
 
 
-def draw_camera_poses(poses, labels, dpi=100):
+def draw_camera_poses(trans, rot, labels, dpi=100):
     n_plots = 2
     fig, axs = plt.subplots(n_plots, 1, figsize=(6, 6), dpi=dpi)
     
-    for (pose, label) in zip(poses, labels):
+    for (t, r, label) in zip(trans, rot, labels):
         # Extracting translation and rotation components
-        xy = pose[:2]
-        xz = [pose[0], pose[2]]
-        rotation = R.from_euler('xyz', pose[3:]).as_matrix() 
+        xy = t[:2]
+        xz = t[[0, 2]]
+        rotation = R.from_euler('ZYX', r).as_matrix()
 
         # Plot 1 shows XY plane
         axs[0].quiver(*xy, rotation[0, 0], rotation[1, 0], headaxislength=0, headwidth=0, headlength=0, color='r', label='X axis')
