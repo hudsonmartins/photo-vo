@@ -73,68 +73,94 @@ def compute_loss(pred, gt, criterion):
     loss = criterion(pred, gt.float())
     return loss
 
+def val_epoch(model, val_loader, criterion, tensorboard_writer, device):
+    epoch_loss = 0
+    with tqdm(val_loader, unit="batch") as tepoch:
+        for images, gt in tepoch:
+            tepoch.set_description(f"Validating ")
+            images, gt = images.to(device), gt.to(device)
+            estimated_pose = model(images.float())
+            loss = compute_loss(estimated_pose, gt, criterion)
+            epoch_loss += loss.item()
+            tepoch.set_postfix(val_loss=loss.item())
+    origin = torch.tensor([0, 0, 0, 0, 0, 0])
+    fig_cameras = draw_camera_poses([origin[3:], estimated_pose[0,3:].detach().cpu(), gt[0,3:].detach().cpu()],
+                                    [origin[:3], estimated_pose[0,:3].detach().cpu(), gt[0,:3].detach().cpu()],
+                                    ["origin", "estimated", "gt"], dpi=700)
+    tensorboard_writer.add_figure("val/poses", fig_cameras, iter)
+    return epoch_loss / len(val_loader)
+
+
+def train_epoch(model, train_loader, criterion, optimizer, epoch, tensorboard_writer, device):
+    epoch_loss = 0
+    iter = (epoch - 1) * len(train_loader) + 1
+
+    with tqdm(train_loader, unit="batch") as tepoch:
+        for images, gt in tepoch:
+            tepoch.set_description(f"Epoch {epoch}")
+            images, gt = images.to(device), gt.to(device)
+            estimated_pose = model(images.float())
+            loss = compute_loss(estimated_pose, gt, criterion)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            epoch_loss += loss.item()
+            tepoch.set_postfix(loss=loss.item())
+            tensorboard_writer.add_scalar("train/loss", loss.item(), iter)
+            iter += 1
+        origin = torch.tensor([0, 0, 0, 0, 0, 0])
+        fig_cameras = draw_camera_poses([origin[3:], estimated_pose[0,3:].detach().cpu(), gt[0,3:].detach().cpu()],
+                                        [origin[:3], estimated_pose[0,:3].detach().cpu(), gt[0,:3].detach().cpu()],
+                                        ["origin", "estimated", "gt"], dpi=700)
+        tensorboard_writer.add_figure("train/poses", fig_cameras, iter)
+    return epoch_loss / len(train_loader)  
+
 def train_tsformer(model, train_loader, val_loader, optimizer, device, config):
     criterion = torch.nn.MSELoss()
     writer = SummaryWriter(log_dir=config.train.tensorboard_dir)
-    loss_sum = 0
-    for i in range(config.train.epochs):
-        logger.info(f"Starting epoch {i}")
-        for it, (images, poses) in enumerate(tqdm(train_loader)):
-            model.train()
-            optimizer.zero_grad()
-            images = images.to(device)
-            poses = poses.to(device)
+    for epoch in range(config.train.epochs):
+        model.train()
+        train_loss = train_epoch(model, train_loader, criterion, optimizer, epoch, writer, device)
+        logger.info(f"Epoch {epoch}, Train loss: {train_loss}")
+        with torch.no_grad():
+            model.eval()
+            val_loss = val_epoch(model, val_loader, criterion, writer, device)
+            logger.info(f"Epoch {epoch}, Validation loss: {val_loss}")
+        
+        if val_loss < config.train.best_loss:
+            config.train.best_loss = val_loss
+            logger.info(f"New best model with loss {val_loss}. Saving checkpoint.")
+            torch.save({
+                "model": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "config": OmegaConf.to_container(config, resolve=True),
+            }, os.path.join(args.experiment, "best_model.tar"))
 
-            output = model(images)
-            loss = compute_loss(output, poses, criterion)
-            #loss = pose_error(poses, output)
+        writer.add_scalar("val/loss", val_loss, epoch)
+        writer.add_scalar("train/loss_total", train_loss, epoch)
 
-            loss.backward()
-            optimizer.step()
-            loss_sum += loss.item()
+def get_optimizer(params, model_args):
+    method = model_args["optimizer"]
 
-            if it % config.train.log_every_iter == 0 and it > 0:
-                logger.info(f"Epoch {i}, Iteration {it}, Loss: {loss_sum / config.train.log_every_iter}")
-                writer.add_scalar("train/loss/total", loss_sum / config.train.log_every_iter, i*len(train_loader) + it)
-                origin = torch.tensor([0, 0, 0, 0, 0, 0])
-                fig_cameras = draw_camera_poses([origin[3:], poses[0,3:].detach().cpu(), output[0,3:].detach().cpu()],
-                                                [origin[:3], poses[0,:3].detach().cpu(), output[0,:3].detach().cpu()],
-                                                ["origin", "gt", "pred"], dpi=700)
-                writer.add_figure("train/fig/cameras", fig_cameras, i*len(train_loader) + it)
-                    
-            if it % config.train.eval_every_iter == 0 and it > 0:
-                logger.info(f"Starting validation at epoch {i}, iteration {it}")
-                model.eval()
-                val_loss = 0
-                for val_it, (images, poses) in enumerate(tqdm(val_loader)):
-                    images = images.to(device)
-                    poses = poses.to(device)
-                    output = model(images)
-                    #loss = pose_error(poses, output)
-                    loss = compute_loss(output, poses, criterion)
-                    val_loss += loss.item()
-                    if val_it > config.data.val_size:
-                        break
-                val_loss /= config.data.val_size
-                logger.info(f"Validation loss at epoch {i}, iteration {it}: {val_loss}")
-                writer.add_scalar("val/loss/total", val_loss, i*len(train_loader) + it)
-                origin = torch.tensor([0, 0, 0, 0, 0, 0])
-                fig_cameras = draw_camera_poses([origin[3:], poses[0,3:].detach().cpu(), output[0,3:].detach().cpu()],
-                                                [origin[:3], poses[0,:3].detach().cpu(), output[0,:3].detach().cpu()],
-                                                ["origin", "gt", "pred"], dpi=700)
-                writer.add_figure("val/fig/cameras", fig_cameras, i*len(train_loader) + it)
-                loss_sum = 0
+    # initialize the optimizer
+    if method == "Adam":
+        optimizer = torch.optim.Adam(params, lr=model_args["lr"])
+    elif method == "SGD":
+        optimizer = torch.optim.SGD(params, lr=model_args["lr"],
+                              momentum=model_args["momentum"],
+                              weight_decay=model_args["weight_decay"])
+    elif method == "RAdam":
+        optimizer = torch.optim.RAdam(params, lr=model_args["lr"])
+    elif method == "Adagrad":
+        optimizer = torch.optim.Adagrad(params, lr=model_args["lr"],
+                                  weight_decay=model_args["weight_decay"])
 
-                if val_loss < config.train.best_loss:
-                    best_loss = val_loss
-                    config.train.best_loss = best_loss
-                    logger.info(f"New best model with loss {val_loss}. Saving checkpoint.")
-                    torch.save({
-                        "model": model.state_dict(),
-                        "optimizer": optimizer.state_dict(),
-                        "config": OmegaConf.to_container(config, resolve=True),
-                    }, os.path.join(args.experiment, "best_model.tar"))
+    # load checkpoint
+    if model_args["checkpoint"] is not None:
+        checkpoint = torch.load(os.path.join(model_args["checkpoint_path"], model_args["checkpoint"]))
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
+    return optimizer
 
 def main(args):
     conf = OmegaConf.load(args.conf)
@@ -149,12 +175,7 @@ def main(args):
             init_cp = torch.load(ckpts[-1], map_location="cpu")
             logger.info(f"Loaded checkpoint {ckpts[-1]}")
 
-    optimizer_fn = {
-        "adam": torch.optim.Adam,
-        "sgd": torch.optim.SGD,
-        "rmsprop": torch.optim.RMSprop,
-    }[conf.train.optimizer]
-
+   
     random.seed(conf.data.seed)
     np.random.seed(conf.data.seed)
     torch.manual_seed(conf.data.seed)
@@ -174,6 +195,10 @@ def main(args):
       	"pretrained_ViT": False,  # load weights from pre-trained ViT
         "checkpoint_path": "checkpoints_tsformer/",  # path to save checkpoint
         "checkpoint": None,  # checkpoint
+        "optimizer": "Adam",  # optimizer [Adam, SGD, Adagrad, RAdam]
+        "lr": 1e-5,  # learning rate
+        "momentum": 0.9,  # SGD momentum
+        "weight_decay": 1e-4,  # SGD momentum
     }
 
     model_params = {
@@ -193,20 +218,19 @@ def main(args):
     
     
     model, model_args = build_model(model_args, model_params)
-    #model = get_photo_vo_model(conf)
-    optimizer = optimizer_fn(model.parameters(), lr=conf.train.lr, **conf.train.optimizer_options)
+
+    optimizer = get_optimizer(model.parameters(), model_args)
     model.to(device)
 
-    if init_cp:
-        model.load_state_dict(init_cp["model"], strict=False)
-        optimizer.load_state_dict(init_cp["optimizer"])
-        if conf.train.lr != optimizer.param_groups[0]['lr']:
-            logger.info(f"Overriding learning rate from {optimizer.param_groups[0]['lr']} to {conf.train.lr}")
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = conf.train.lr
+    # if init_cp:
+    #     model.load_state_dict(init_cp["model"], strict=False)
+    #     optimizer.load_state_dict(init_cp["optimizer"])
+    #     if conf.train.lr != optimizer.param_groups[0]['lr']:
+    #         logger.info(f"Overriding learning rate from {optimizer.param_groups[0]['lr']} to {conf.train.lr}")
+    #         for param_group in optimizer.param_groups:
+    #             param_group['lr'] = conf.train.lr
     
     logger.info(f"Training with sequences {conf.data.train_sequences} and validation with {conf.data.val_sequences}")
-    #train(model, train_loader, val_loader, optimizer, device, conf)
     train_tsformer(model, train_loader, val_loader, optimizer, device, conf)
 
 if __name__ == "__main__":
