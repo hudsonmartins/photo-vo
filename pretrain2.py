@@ -73,7 +73,7 @@ def compute_loss(pred, gt, criterion):
     loss = criterion(pred, gt.float())
     return loss
 
-def val_epoch(model, val_loader, criterion, tensorboard_writer, device):
+def val_epoch(model, val_loader, criterion, tensorboard_writer, epoch, device):
     epoch_loss = 0
     with tqdm(val_loader, unit="batch") as tepoch:
         for images, gt in tepoch:
@@ -87,7 +87,7 @@ def val_epoch(model, val_loader, criterion, tensorboard_writer, device):
     fig_cameras = draw_camera_poses([origin[3:], estimated_pose[0,3:].detach().cpu(), gt[0,3:].detach().cpu()],
                                     [origin[:3], estimated_pose[0,:3].detach().cpu(), gt[0,:3].detach().cpu()],
                                     ["origin", "estimated", "gt"], dpi=700)
-    tensorboard_writer.add_figure("val/poses", fig_cameras, iter)
+    tensorboard_writer.add_figure("val/poses", fig_cameras, epoch)
     return epoch_loss / len(val_loader)
 
 
@@ -124,7 +124,7 @@ def train_tsformer(model, train_loader, val_loader, optimizer, device, config):
         logger.info(f"Epoch {epoch}, Train loss: {train_loss}")
         with torch.no_grad():
             model.eval()
-            val_loss = val_epoch(model, val_loader, criterion, writer, device)
+            val_loss = val_epoch(model, val_loader, criterion, writer, epoch, device)
             logger.info(f"Epoch {epoch}, Validation loss: {val_loss}")
         
         if val_loss < config.train.best_loss:
