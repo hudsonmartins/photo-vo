@@ -13,8 +13,8 @@ def get_iterator(data_path, size, batch_size, sequences_names, max_skip):
     preprocess = transforms.Compose([
         transforms.Resize(size),
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.34721234, 0.36705238, 0.36066107],
-                            std=[0.30737526, 0.31515116, 0.32020183])
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                            std=[0.229, 0.224, 0.225])
     ])
     
     
@@ -247,9 +247,8 @@ if __name__ == "__main__":
         transforms.Resize((192, 640)),
         transforms.ToTensor(),
         transforms.Normalize(
-            mean=[0.34721234, 0.36705238, 0.36066107],
-            std=[0.30737526, 0.31515116, 0.32020183]), ])
-
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225])])
     data = KITTI(data_path='/home/hudson/Desktop/Unicamp/datasets/kitti/sequences',
                  gt_path='/home/hudson/Desktop/Unicamp/datasets/kitti/poses',
                  transform=preprocess, sequences=["03"], window_size=2, overlap=1)
