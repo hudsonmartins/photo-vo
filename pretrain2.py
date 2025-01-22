@@ -73,7 +73,7 @@ def compute_loss(pred, gt, criterion):
     loss = criterion(pred, gt.float())
     return loss
 
-def val_epoch(model, val_loader, criterion, tensorboard_writer, epoch, device):
+def val_epoch(model, val_loader, criterion, device):
     epoch_loss = 0
     with tqdm(val_loader, unit="batch") as tepoch:
         for images, gt in tepoch:
@@ -82,14 +82,8 @@ def val_epoch(model, val_loader, criterion, tensorboard_writer, epoch, device):
             estimated_pose = model(images.float())
             loss = compute_loss(estimated_pose, gt, criterion)
             epoch_loss += loss.item()
-            tepoch.set_postfix(val_loss=loss.item())
-    origin = torch.tensor([0, 0, 0, 0, 0, 0])
-    fig_cameras = draw_camera_poses([origin[3:], estimated_pose[0,3:].detach().cpu(), gt[0,3:].detach().cpu()],
-                                    [origin[:3], estimated_pose[0,:3].detach().cpu(), gt[0,:3].detach().cpu()],
-                                    ["origin", "estimated", "gt"], dpi=700)
-    tensorboard_writer.add_figure("val/poses", fig_cameras, epoch)
-    return epoch_loss / len(val_loader)
-
+            tepoch.set_postfix(val_loss=loss.item())    
+    return epoch_loss / len(val_loader), [estimated_pose[0].detach().cpu(), gt[0].detach().cpu()]
 
 def train_epoch(model, train_loader, criterion, optimizer, epoch, tensorboard_writer, device):
     epoch_loss = 0
@@ -124,7 +118,7 @@ def train_tsformer(model, train_loader, val_loader, optimizer, device, config):
         logger.info(f"Epoch {epoch}, Train loss: {train_loss}")
         with torch.no_grad():
             model.eval()
-            val_loss = val_epoch(model, val_loader, criterion, writer, epoch, device)
+            val_loss, sample = val_epoch(model, val_loader, criterion, device)
             logger.info(f"Epoch {epoch}, Validation loss: {val_loss}")
         
         if val_loss < config.train.best_loss:
@@ -135,6 +129,11 @@ def train_tsformer(model, train_loader, val_loader, optimizer, device, config):
                 "optimizer": optimizer.state_dict(),
                 "config": OmegaConf.to_container(config, resolve=True),
             }, os.path.join(args.experiment, "best_model.tar"))
+            origin = torch.tensor([0, 0, 0, 0, 0, 0])
+            fig_cameras = draw_camera_poses([origin[3:], sample[0][3:], sample[1][3:]],
+                                            [origin[:3], sample[0][:3], sample[1][:3]],
+                                            ["origin", "estimated", "gt"], dpi=700)
+            writer.add_figure("val/poses", fig_cameras, epoch)
 
         writer.add_scalar("val/loss", val_loss, epoch)
         writer.add_scalar("train/loss_total", train_loss, epoch)
@@ -190,8 +189,7 @@ def main(args):
                            conf.data.val_sequences, 1)
 
     os.makedirs(args.experiment, exist_ok=True)
-    
-    
+        
     model_args = {
         "window_size": 2,  # number of frames in window
       	"pretrained_ViT": True,  # load weights from pre-trained ViT
@@ -205,7 +203,7 @@ def main(args):
 
     model_params = {
         "dim": 384,
-        "image_size": (192, 640), 
+        "image_size": (640, 640), 
         "patch_size": 16,
         "attention_type": 'divided_space_time',  # ['divided_space_time', 'space_only','joint_space_time', 'time_only']
         "num_frames": model_args["window_size"],
@@ -217,8 +215,7 @@ def main(args):
         "ff_dropout": 0.1,
         "time_only": False,
     }
-    
-    
+        
     model, model_args = build_model(model_args, model_params)
 
     optimizer = get_optimizer(model.parameters(), model_args)
