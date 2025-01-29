@@ -116,10 +116,15 @@ def train_tsformer(model, train_loader, val_loader, optimizer, device, config):
         model.train()
         train_loss = train_epoch(model, train_loader, criterion, optimizer, epoch, writer, device)
         logger.info(f"Epoch {epoch}, Train loss: {train_loss}")
+        writer.add_scalar("train/loss_total", train_loss, epoch)
+
         with torch.no_grad():
             model.eval()
             val_loss, sample = val_epoch(model, val_loader, criterion, device)
             logger.info(f"Epoch {epoch}, Validation loss: {val_loss}")
+        
+        logger.info(f"Epoch {epoch}, Validation loss: {val_loss}")
+        writer.add_scalar("val/loss", val_loss, epoch)
         
         if val_loss < config.train.best_loss:
             config.train.best_loss = val_loss
@@ -135,8 +140,7 @@ def train_tsformer(model, train_loader, val_loader, optimizer, device, config):
                                             ["origin", "estimated", "gt"], dpi=700)
             writer.add_figure("val/poses", fig_cameras, epoch)
 
-        writer.add_scalar("val/loss", val_loss, epoch)
-        writer.add_scalar("train/loss_total", train_loss, epoch)
+        
 
 def get_optimizer(params, model_args):
     method = model_args["optimizer"]
