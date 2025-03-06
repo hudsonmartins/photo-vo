@@ -68,8 +68,8 @@ def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, s
                 continue
             tot_n_samples = (len(train_loader) * epoch + it)
             model.train()
-            # if(config.features_model.freeze):
-            #     model.matcher.eval()
+            if(config.features_model.freeze):
+                model.matcher.eval()
             optimizer.zero_grad()
             data = batch_to_device(data, device, non_blocking=True)
             output = model(data)
@@ -205,10 +205,10 @@ def main(args):
 
     logger.info('Training with the following configuration: ')
     logger.info(conf)
-    # if(conf.features_model.freeze):
-    #     logger.info("Freezing the features model")
-    #     for param in photo_vo_model.matcher.parameters():
-    #         param.requires_grad = False        
+    if(conf.features_model.freeze):
+        logger.info("Freezing the features model")
+        for param in photo_vo_model.matcher.parameters():
+            param.requires_grad = False        
     train(photo_vo_model, train_loader, val_loader, optimizer, device, conf, epoch, args.start_iter, args.debug)
 
 
