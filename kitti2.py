@@ -199,7 +199,6 @@ class KITTI(torch.utils.data.Dataset):
             frames_seq = frames_seq[::self.frame_skip]
             frames += frames_seq
             seqs += [sequence] * len(frames_seq)
-        print(frames)
         return frames, seqs
 
     def read_gt(self):
