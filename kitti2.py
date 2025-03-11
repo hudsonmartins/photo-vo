@@ -13,6 +13,8 @@ def get_iterator(data_path, size, batch_size, sequences_names, max_skip):
     preprocess = transforms.Compose([
         transforms.Resize(size),
         transforms.ToTensor(),
+        # transforms.Normalize(mean=[0.485, 0.456, 0.406],
+        #                     std=[0.229, 0.224, 0.225])
     ])
     
     
@@ -76,10 +78,10 @@ class KITTI(torch.utils.data.Dataset):
                  sequences=["00", "02", "08", "09"],
                  window_size=3,
                  overlap=1,
-                 frame_skip=1,
                  read_poses=True,
                  transform=None,
                  ):
+
 
         self.data_path = data_path
         self.gt_path = gt_path
@@ -89,7 +91,6 @@ class KITTI(torch.utils.data.Dataset):
         self.window_size = window_size
         self.overlap = overlap
         self.transform = transform
-        self.frame_skip = frame_skip
 
         # KITTI normalization
         self.mean_angles = np.array([1.7061e-5, 9.5582e-4, -5.5258e-5])
@@ -157,8 +158,8 @@ class KITTI(torch.utils.data.Dataset):
                 angles = rotation_to_euler(R, seq='zyx')
 
                 # normalization
-                #angles = (np.asarray(angles) - self.mean_angles) / self.std_angles
-                #t = (np.asarray(t) - self.mean_t) / self.std_t
+                # angles = (np.asarray(angles) - self.mean_angles) / self.std_angles
+                # t = (np.asarray(t) - self.mean_t) / self.std_t
 
                 # concatenate angles and translation
                 y.append(list(angles) + list(t))
@@ -191,24 +192,33 @@ class KITTI(torch.utils.data.Dataset):
             self.cam_params["cy"] = cy
 
     def read_frames(self):
+        # Get frames list
         frames = []
         seqs = []
         for sequence in self.sequences:
-            frames_dir = os.path.join(self.data_path, sequence, f"image_{self.camera_id}", "*.png")
+            frames_dir = os.path.join(self.data_path, sequence, "image_{}".format(self.camera_id), "*.png")
             frames_seq = sorted(glob.glob(frames_dir))
-            frames_seq = frames_seq[::self.frame_skip]
-            frames += frames_seq
-            seqs += [sequence] * len(frames_seq)
+            frames = frames + frames_seq
+            seqs = seqs + [sequence] * len(frames_seq)
         return frames, seqs
 
     def read_gt(self):
-        gt = []
-        for sequence in self.sequences:
-            with open(os.path.join(self.gt_path, sequence + ".txt")) as f:
-                lines = f.readlines()
-            gt_seq = [list(map(float, line.strip().split())) for line in lines]
-            gt_seq = gt_seq[::self.frame_skip]  
-            gt += gt_seq
+        # Read ground truth
+        if self.read_gt:
+            gt = []
+            for sequence in self.sequences:
+                with open(os.path.join(self.gt_path, sequence + ".txt")) as f:
+                    lines = f.readlines()
+
+                # convert poses to float
+                for line_idx, line in enumerate(lines):
+                    line = line.strip().split()
+                    line = [float(x) for x in line]
+                    gt.append(line)
+
+        else:  # test data (sequences 11-21)
+            gt = None
+
         return gt
 
     def create_windowed_dataframe(self, df):
@@ -234,14 +244,14 @@ if __name__ == "__main__":
 
     # Create dataloader
     preprocess = transforms.Compose([
-        transforms.Resize((640, 640)),
+        transforms.Resize((192, 640)),
         transforms.ToTensor(),
         transforms.Normalize(
             mean=[0.485, 0.456, 0.406],
             std=[0.229, 0.224, 0.225])])
     data = KITTI(data_path='/home/hudson/Desktop/Unicamp/datasets/kitti/sequences',
                  gt_path='/home/hudson/Desktop/Unicamp/datasets/kitti/poses',
-                 transform=preprocess, sequences=["03"], window_size=2, overlap=1, frame_skip=1)
+                 transform=preprocess, sequences=["03"], window_size=2, overlap=1)
     test_loader = torch.utils.data.DataLoader(data, batch_size=5, shuffle=False)
 
     # Test dataloader
