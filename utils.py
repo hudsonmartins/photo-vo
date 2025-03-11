@@ -81,6 +81,17 @@ def debug_batch(data, figs_dpi=100, i=0):
 
     return {"cameras": fig_cameras}
 
+def debug_batch_kitti(data, figs_dpi=100, i=0):
+    images, kpts, matches= [], [], []
+    data = batch_to_device(data, "cpu", non_blocking=False)
+    fig_matches = {}
+
+    origin = torch.tensor([0, 0, 0, 0, 0, 0])
+    fig_cameras = draw_camera_poses([origin, data['gt_vo'][i], data['pred_vo'][i].detach()], 
+                                    ['cam0', 'gt_cam1', 'pred_cam1'],
+                                    dpi=figs_dpi)
+    return {"matches": fig_matches, "cameras": fig_cameras}
+
 
 def draw_camera_poses(trans, rot, labels, dpi=100):
     n_plots = 2
