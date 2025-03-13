@@ -70,7 +70,7 @@ def do_evaluation(val_loader, val_size, model, device, n_images=5):
     return avg_losses, all_figs
 
 def compute_loss(pred, gt, criterion):
-    loss = criterion(pred, gt.float())
+    loss = criterion(pred, gt.float())*100
     return loss
 
 def val_epoch(model, val_loader, criterion, device):
