@@ -102,7 +102,6 @@ def build_model(args, model_params):
                         attention_type=model_params["attention_type"],
                         pretrained_model="")
 
-
     if torch.cuda.is_available():
         model.cuda()
     
@@ -148,7 +147,7 @@ if __name__ == "__main__":
         "weight_decay": 1e-4,  # SGD momentum
         "epoch": 100,  # train iters each timestep
     	"weighted_loss": None,  # float to weight angles in loss function
-      	"pretrained_ViT": False,  # load weights from pre-trained ViT
+      	"pretrained_ViT": True,  # load weights from pre-trained ViT
         "checkpoint_path": "checkpoints/Exp4",  # path to save checkpoint
         "checkpoint": None,  # checkpoint
     }

@@ -158,8 +158,8 @@ class KITTI(torch.utils.data.Dataset):
                 angles = rotation_to_euler(R, seq='zyx')
 
                 # normalization
-                # angles = (np.asarray(angles) - self.mean_angles) / self.std_angles
-                # t = (np.asarray(t) - self.mean_t) / self.std_t
+                angles = (np.asarray(angles) - self.mean_angles) / self.std_angles
+                t = (np.asarray(t) - self.mean_t) / self.std_t
 
                 # concatenate angles and translation
                 y.append(list(angles) + list(t))

@@ -196,7 +196,7 @@ def main(args):
         
     model_args = {
         "window_size": 2,  # number of frames in window
-      	"pretrained_ViT": False,  # load weights from pre-trained ViT
+      	"pretrained_ViT": True,  # load weights from pre-trained ViT
         "checkpoint_path": "checkpoints_tsformer/",  # path to save checkpoint
         "checkpoint": None,  # checkpoint
         "optimizer": "Adam",  # optimizer [Adam, SGD, Adagrad, RAdam]
