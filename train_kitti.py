@@ -128,6 +128,8 @@ def train_tsformer(model, train_loader, val_loader, optimizer, device, config):
     writer = SummaryWriter(log_dir=config.train.tensorboard_dir)
     for epoch in range(config.train.epochs):
         model.train()
+        if(config.features_model.freeze):
+                model.matcher.eval()
         train_loss = train_epoch(model, train_loader, criterion, optimizer, epoch, writer, device)
         logger.info(f"Epoch {epoch}, Train loss: {train_loss}")
         writer.add_scalar("train/loss_total", train_loss, epoch)
@@ -218,23 +220,7 @@ def main(args):
         "momentum": 0.9,  # SGD momentum
         "weight_decay": 1e-4,  # SGD momentum
     }
-
-    model_params = {
-        "dim": 384,
-        "image_size": (640, 640), 
-        "patch_size": 16,
-        "attention_type": 'divided_space_time',  # ['divided_space_time', 'space_only','joint_space_time', 'time_only']
-        "num_frames": model_args["window_size"],
-        "num_classes": 6 * (model_args["window_size"] - 1),  # 6 DoF for each frame
-        "depth": 12,
-        "heads": 6,
-        "dim_head": 64,
-        "attn_dropout": 0.1,
-        "ff_dropout": 0.1,
-        "time_only": False,
-    }
         
-    #model, model_args = build_model(model_args, model_params)
     model = get_photo_vo_model(conf)
     optimizer = get_optimizer(model.parameters(), model_args)
     model.to(device)
@@ -246,7 +232,12 @@ def main(args):
             logger.info(f"Overriding learning rate from {optimizer.param_groups[0]['lr']} to {conf.train.lr}")
             for param_group in optimizer.param_groups:
                 param_group['lr'] = conf.train.lr
-    
+
+    if(conf.features_model.freeze):
+        logger.info("Freezing the features model")
+        for param in model.matcher.parameters():
+            param.requires_grad = False 
+
     logger.info(f"Training with sequences {conf.data.train_sequences} and validation with {conf.data.val_sequences}")
     train_tsformer(model, train_loader, val_loader, optimizer, device, conf)
 
