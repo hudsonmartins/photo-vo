@@ -84,7 +84,8 @@ def val_epoch(model, val_loader, criterion, device):
                     'T_0to1': Pose.from_Rt(torch.eye(3).repeat(images.shape[0], 1, 1), gt[:, :3])}
             data = batch_to_device(data, device, non_blocking=True)
             output = model(data)
-            estimated_pose = output['pred_vo']            
+            estimated_pose = output['pred_vo']    
+            gt = gt.to(device)
             loss = compute_loss(estimated_pose, gt, criterion)
             epoch_loss += loss.item()
             tepoch.set_postfix(val_loss=loss.item())    
@@ -105,6 +106,7 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, tensorboard_wr
             data = batch_to_device(data, device, non_blocking=True)
             output = model(data)
             estimated_pose = output['pred_vo']
+            gt = gt.to(device)
             loss = compute_loss(estimated_pose, gt, criterion)
 
             optimizer.zero_grad()
