@@ -69,8 +69,8 @@ class ImagePairEncoder(nn.Module):
                             drop_path_rate=0.1,
                             num_frames=model_params["num_frames"],
                             attention_type=model_params["attention_type"])
-        #checkpoint = torch.load('weights/tsformer-vo.tar', map_location=torch.device("cuda"))
-        #self.vit.load_state_dict(checkpoint['model'])
+        checkpoint = torch.load('weights/tsformer-vo.tar', map_location=torch.device("cuda"))
+        self.vit.load_state_dict(checkpoint['model'])
         self.vit.head = torch.nn.Identity() #remove last linear layer
                                                 
     def forward(self, data):
