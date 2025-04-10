@@ -86,23 +86,33 @@ class ImagePairEncoder(nn.Module):
 class MotionEstimator(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.proj = nn.Linear(384, config.photo_vo.model.dim_emb)
-        self.attn = nn.MultiheadAttention(embed_dim=config.photo_vo.model.dim_emb, num_heads=8, batch_first=True)
+        self.flatten = nn.Flatten(start_dim=2, end_dim=3)
+        self.avgpool = nn.AdaptiveAvgPool1d(1)
         self.fc = nn.Linear(config.photo_vo.model.dim_emb, 6)
+        self.attention = nn.MultiheadAttention(embed_dim=config.photo_vo.model.dim_emb, num_heads=8)
 
-    def forward(self, image_embs, patch_embs=None):
+    def forward(self, image_embs, patch_embs):
+        patch_embs = self.attention(patch_embs, patch_embs, patch_embs)[0]
         image_embs = image_embs.unsqueeze(1)
-        image_embs = self.proj(image_embs)
-        x, _ = self.attn(image_embs, patch_embs, patch_embs)  
+        x = torch.cat([image_embs, patch_embs], dim=1)
+        x = x.permute(0, 2, 1)
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
         x = self.fc(x)
-        return x.squeeze(1)
-        
+        return x
+
+
 class PhotoVoModel(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
         self.imgenc = ImagePairEncoder(config)
+        for param in self.imgenc.parameters():
+            param.requires_grad = False
         self.matcher = gf.models.get_model(config.features_model.name)(config.features_model)
+        for param in self.matcher.parameters():
+            param.requires_grad = False
+
         self.penc = PatchEncoder(config)
         self.motion_estimator = MotionEstimator(config)
         self.features = None
