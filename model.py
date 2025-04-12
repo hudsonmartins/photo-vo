@@ -86,20 +86,18 @@ class ImagePairEncoder(nn.Module):
 class MotionEstimator(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.flatten = nn.Flatten(start_dim=2, end_dim=3)
-        self.avgpool = nn.AdaptiveAvgPool1d(1)
+        self.cross_attn = nn.MultiheadAttention(
+            embed_dim=config.photo_vo.model.dim_emb, num_heads=8
+        )
         self.fc = nn.Linear(config.photo_vo.model.dim_emb, 6)
-        self.attention = nn.MultiheadAttention(embed_dim=config.photo_vo.model.dim_emb, num_heads=8)
 
     def forward(self, image_embs, patch_embs):
-        patch_embs = self.attention(patch_embs, patch_embs, patch_embs)[0]
-        image_embs = image_embs.unsqueeze(1)
-        x = torch.cat([image_embs, patch_embs], dim=1)
-        x = x.permute(0, 2, 1)
-        x = self.avgpool(x)
-        x = torch.flatten(x, 1)
-        x = self.fc(x)
-        return x
+        query = image_embs.unsqueeze(0)
+        key = value = patch_embs.permute(1, 0, 2)  # Swap batch and sequence dimensions
+        fused, _ = self.cross_attn(query, key, value)        
+        fused = fused.squeeze(0)
+        
+        return self.fc(fused)
 
 
 class PhotoVoModel(nn.Module):
