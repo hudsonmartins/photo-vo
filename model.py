@@ -164,8 +164,6 @@ class PhotoVoModel(nn.Module):
         super().__init__()
         self.config = config
         self.imgenc = ImagePairEncoder(config)
-        for param in self.imgenc.parameters():
-            param.requires_grad = False
         self.matcher = gf.models.get_model(config.features_model.name)(config.features_model)
         for param in self.matcher.parameters():
             param.requires_grad = False
