@@ -12,20 +12,79 @@ from loss import patches_photometric_loss, pose_error
 
 class PatchEncoder(nn.Module):
     def __init__(self, config):
-        '''
-        Patch encoder that encodes the patches into a feature vector
-        assumes that the patches are sorted by confidence
-        '''
         super().__init__()
-        patch_dim = 3 * config.photo_vo.model.patch_size ** 2
-        self.patch_emb = nn.Sequential(nn.Flatten(start_dim=2, end_dim=4),
-                                       nn.LayerNorm(patch_dim),
-                                       nn.Linear(patch_dim, config.photo_vo.model.dim_emb-1),
-                                       nn.LayerNorm(config.photo_vo.model.dim_emb-1))
-        
+        self.patch_size = config.photo_vo.model.patch_size
+        self.dim_emb = config.photo_vo.model.dim_emb
+        self.num_matches = config.photo_vo.model.num_matches
+
+        # 1. CNN-based local feature extraction
+        self.conv = nn.Sequential(
+            nn.Conv2d(3, 16, kernel_size=3, padding=1),
+            nn.GELU(),
+            nn.Conv2d(16, 32, kernel_size=3, padding=1),
+            nn.GELU()
+        )
+
+        # 2. MLP positional embedding from (x, y)
+        self.pos_mlp = nn.Sequential(
+            nn.Linear(2, self.dim_emb),
+            nn.ReLU(),
+            nn.Linear(self.dim_emb, self.dim_emb)
+        )
+
+        # 3. Confidence score projection
+        self.score_proj = nn.Linear(1, self.dim_emb)
+
+        # 4. Transformer for patch interaction
+        self.transformer = nn.TransformerEncoderLayer(
+            d_model=self.dim_emb,
+            nhead=4,
+            dim_feedforward=256,
+            dropout=0.1,
+            batch_first=True
+        )
+
+        # Optional projection if needed to reduce dimensionality
+        self.feature_proj = nn.Linear(32 * self.patch_size * self.patch_size, self.dim_emb)
+
     def forward(self, data):
-        patches = torch.cat([data['view0']['patches'], data['view1']['patches']], dim=1)
-        return self.patch_emb(patches)
+        patches0 = data['view0']['patches']  # (B, N, 3, H, W)
+        patches1 = data['view1']['patches']
+        coords0 = data['view0']['patches_coords']  # (B, N, 2)
+        coords1 = data['view1']['patches_coords']
+        scores0 = data['view0']['scores']  # (B, N)
+        scores1 = data['view1']['scores']
+
+        # Merge views
+        patches = torch.cat([patches0, patches1], dim=1)  # (B, 2N, 3, H, W)
+        coords = torch.cat([coords0, coords1], dim=1)     # (B, 2N, 2)
+        scores = torch.cat([scores0, scores1], dim=1)     # (B, 2N)
+
+        B, N2, C, H, W = patches.shape
+        patches = patches.view(B * N2, C, H, W)
+        feat_maps = self.conv(patches)  # (B*2N, 32, H, W)
+
+        # Flatten to vector
+        flat_feats = feat_maps.view(B, N2, -1)  # (B, 2N, 32*H*W)
+        flat_feats = self.feature_proj(flat_feats)  # (B, 2N, D)
+
+        # Positional embedding from (x, y)
+        pos_emb = self.pos_mlp(coords)  # (B, 2N, D)
+        flat_feats = flat_feats + pos_emb
+
+        # Modulate by confidence score
+        score_emb = self.score_proj(scores.unsqueeze(-1))  # (B, 2N, D)
+        flat_feats = flat_feats * score_emb
+
+        # Mask zero-confidence patches
+        mask = (scores > 0).float().unsqueeze(-1)  # (B, 2N, 1)
+        flat_feats = flat_feats * mask
+
+        # Apply transformer layer
+        encoded = self.transformer(flat_feats)  # (B, 2N, D)
+
+        return encoded
+
     
 class ImagePairEncoder(nn.Module):
     def __init__(self, config):
@@ -116,66 +175,73 @@ class PhotoVoModel(nn.Module):
         self.features = None
 
     def forward(self, data):
-        # Encode images
+        # Encode full-frame images
         image_embs = self.imgenc(data)
         self.features = {}
-        # Extract and match features
+
+        # Feature extraction and matching
         self.features = self.matcher(data)
         kpts0, kpts1 = self.features['keypoints0'], self.features['keypoints1']
         scores0, scores1 = self.features['matching_scores0'], self.features['matching_scores1']
         sorted_matches = get_sorted_matches(self.features)
         sorted_matches = sorted_matches[:, :self.config.photo_vo.model.num_matches]
 
-        kpts0_valid = None
-        kpts1_valid = None
-        scores0_valid = None
-        scores1_valid = None
+        # Initialize containers
+        kpts0_valid, kpts1_valid = None, None
+        scores0_valid, scores1_valid = None, None
+
         for b in range(sorted_matches.size(0)):
-            b_kpts0_valid, b_kpts1_valid, b_scores0_valid, b_scores1_valid = None, None, None, None
+            b_kpts0_valid, b_kpts1_valid = None, None
+            b_scores0_valid, b_scores1_valid = None, None
+
             for m in sorted_matches[b]:
                 if m[1] > -1:
-                    b_kpts0_valid = kpts0[b][m[0].long()].unsqueeze(0) if b_kpts0_valid is None \
-                                    else torch.cat([b_kpts0_valid, kpts0[b][m[0].long()].unsqueeze(0)], dim=0)
-                    b_kpts1_valid = kpts1[b][m[1].long()].unsqueeze(0) if b_kpts1_valid is None \
-                                    else torch.cat([b_kpts1_valid, kpts1[b][m[1].long()].unsqueeze(0)], dim=0)
-                    b_scores0_valid = scores0[b][m[0].long()].unsqueeze(0) if b_scores0_valid is None \
-                                    else torch.cat([b_scores0_valid, scores0[b][m[0].long()].unsqueeze(0)], dim=0)
-                    b_scores1_valid = scores1[b][m[1].long()].unsqueeze(0) if b_scores1_valid is None \
-                                    else torch.cat([b_scores1_valid, scores1[b][m[1].long()].unsqueeze(0)], dim=0)
+                    # Valid match
+                    i0, i1 = m[0].long(), m[1].long()
+                    b_kpts0_valid = kpts0[b][i0].unsqueeze(0) if b_kpts0_valid is None else torch.cat([b_kpts0_valid, kpts0[b][i0].unsqueeze(0)], dim=0)
+                    b_kpts1_valid = kpts1[b][i1].unsqueeze(0) if b_kpts1_valid is None else torch.cat([b_kpts1_valid, kpts1[b][i1].unsqueeze(0)], dim=0)
+                    b_scores0_valid = scores0[b][i0].unsqueeze(0) if b_scores0_valid is None else torch.cat([b_scores0_valid, scores0[b][i0].unsqueeze(0)], dim=0)
+                    b_scores1_valid = scores1[b][i1].unsqueeze(0) if b_scores1_valid is None else torch.cat([b_scores1_valid, scores1[b][i1].unsqueeze(0)], dim=0)
                 else:
-                    # Add nan to the invalid matches
-                    b_kpts0_valid = torch.full((1, kpts0.size(2)), float('nan'), dtype=kpts0.dtype, device=kpts0.device) if b_kpts0_valid is None \
-                                    else torch.cat([b_kpts0_valid, torch.full((1, kpts0.size(2)), float('nan'), dtype=kpts0.dtype, device=kpts0.device)], dim=0)
-                    b_kpts1_valid = torch.full((1, kpts1.size(2)), float('nan'), dtype=kpts1.dtype, device=kpts1.device) if b_kpts1_valid is None \
-                                    else torch.cat([b_kpts1_valid, torch.full((1, kpts1.size(2)), float('nan'), dtype=kpts1.dtype, device=kpts1.device)], dim=0)
-                    b_scores0_valid = torch.full((1,), 0.0, dtype=scores0.dtype, device=scores0.device) if b_scores0_valid is None \
-                                    else torch.cat([b_scores0_valid, torch.full((1,), 0.0, dtype=scores0.dtype, device=scores0.device)], dim=0)
-                    b_scores1_valid = torch.full((1,), 0.0, dtype=scores1.dtype, device=scores1.device) if b_scores1_valid is None \
-                                    else torch.cat([b_scores1_valid, torch.full((1,), 0.0, dtype=scores1.dtype, device=scores1.device)], dim=0)
+                    # Invalid match -> fill with NaNs and zeros
+                    nan_kpt = torch.full((1, kpts0.size(2)), float('nan'), dtype=kpts0.dtype, device=kpts0.device)
+                    zero_score = torch.zeros(1, dtype=scores0.dtype, device=scores0.device)
+                    b_kpts0_valid = nan_kpt if b_kpts0_valid is None else torch.cat([b_kpts0_valid, nan_kpt], dim=0)
+                    b_kpts1_valid = nan_kpt if b_kpts1_valid is None else torch.cat([b_kpts1_valid, nan_kpt], dim=0)
+                    b_scores0_valid = zero_score if b_scores0_valid is None else torch.cat([b_scores0_valid, zero_score], dim=0)
+                    b_scores1_valid = zero_score if b_scores1_valid is None else torch.cat([b_scores1_valid, zero_score], dim=0)
+
+            # Stack batch-wise
             kpts0_valid = b_kpts0_valid.unsqueeze(0) if kpts0_valid is None else torch.cat([kpts0_valid, b_kpts0_valid.unsqueeze(0)], dim=0)
             kpts1_valid = b_kpts1_valid.unsqueeze(0) if kpts1_valid is None else torch.cat([kpts1_valid, b_kpts1_valid.unsqueeze(0)], dim=0)
             scores0_valid = b_scores0_valid.unsqueeze(0) if scores0_valid is None else torch.cat([scores0_valid, b_scores0_valid.unsqueeze(0)], dim=0)
             scores1_valid = b_scores1_valid.unsqueeze(0) if scores1_valid is None else torch.cat([scores1_valid, b_scores1_valid.unsqueeze(0)], dim=0)
-        
-        # Extract patches
+
+        # Extract local patches from both views using valid keypoints
         patches0 = get_patches(data['view0']['image'], kpts0_valid, self.config.photo_vo.model.patch_size)
         patches1 = get_patches(data['view1']['image'], kpts1_valid, self.config.photo_vo.model.patch_size)
-        
-        # Fill the invalid patches with -1
+
+        # Replace NaNs with -1 for invalid patches
         patches0 = torch.nan_to_num(patches0, nan=-1.0)
         patches1 = torch.nan_to_num(patches1, nan=-1.0)
-        data['view0']['patches_coords'] = kpts0_valid
-        data['view1']['patches_coords'] = kpts1_valid
+
+        # Store patch-related info in data
         data['view0']['patches'] = patches0
         data['view1']['patches'] = patches1
-        # Encode patches
-        patch_embs= self.penc(data)
-        # Concat with scores
-        scores = torch.cat([scores0_valid, scores1_valid], dim=1)
-        patch_embs = torch.cat([patch_embs, scores.unsqueeze(-1)], dim=-1)
+        data['view0']['patches_coords'] = kpts0_valid
+        data['view1']['patches_coords'] = kpts1_valid
+        data['view0']['scores'] = scores0_valid
+        data['view1']['scores'] = scores1_valid
+
+        # Run the new PatchEncoder (CNN + Transformer + MLP positional + confidence fusion)
+        patch_embs = self.penc(data)  # Output: (B, 2N, D)
+
+        # Run motion estimator using both image and patch-level embeddings
         output = self.motion_estimator(image_embs, patch_embs)
         data['pred_vo'] = output
+
         return {**data, **self.features}
+
 
     def loss(self, data):
         pred = data['pred_vo']
