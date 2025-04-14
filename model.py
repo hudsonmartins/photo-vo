@@ -131,7 +131,17 @@ class ImagePairEncoder(nn.Module):
         checkpoint = torch.load('weights/tsformer-vo.tar', map_location=torch.device("cuda"))
         self.vit.load_state_dict(checkpoint['model'])
         self.vit.head = torch.nn.Identity() #remove last linear layer
-                                                
+
+        # Freeze all ViT parameters
+        for param in self.vit.parameters():
+            param.requires_grad = False
+
+        # Unfreeze last 2 transformer blocks
+        if hasattr(self.vit, 'blocks'):
+            for block in self.vit.blocks[-2:]:
+                for param in block.parameters():
+                    param.requires_grad = True
+        
     def forward(self, data):
         im0 = torch.clamp(data['view0']['image'], 0, 1)
         im1 = torch.clamp(data['view1']['image'], 0, 1)
@@ -164,6 +174,7 @@ class PhotoVoModel(nn.Module):
         super().__init__()
         self.config = config
         self.imgenc = ImagePairEncoder(config)
+        
         self.matcher = gf.models.get_model(config.features_model.name)(config.features_model)
         for param in self.matcher.parameters():
             param.requires_grad = False
@@ -171,7 +182,7 @@ class PhotoVoModel(nn.Module):
         self.penc = PatchEncoder(config)
         self.motion_estimator = MotionEstimator(config)
         self.features = None
-
+        
     def forward(self, data):
         # Encode full-frame images
         image_embs = self.imgenc(data)
