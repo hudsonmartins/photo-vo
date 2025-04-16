@@ -6,46 +6,34 @@ from timesformer.models.vit import VisionTransformer
 from model_tsformer import build_model as tsformer
 from functools import partial
 
-from utils import get_patches, get_sorted_matches, get_kpts_projection, matrix_to_euler_angles, euler_angles_to_matrix
-from loss import patches_photometric_loss, pose_error
+from utils import get_patches, get_sorted_matches, matrix_to_euler_angles
+from loss import pose_error
 
 
 class PatchEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.patch_size = config.photo_vo.model.patch_size
+        patch_dim = 3 * config.photo_vo.model.patch_size ** 2
         self.dim_emb = config.photo_vo.model.dim_emb
-        self.num_matches = config.photo_vo.model.num_matches
-
-        # 1. CNN-based local feature extraction
-        self.conv = nn.Sequential(
-            nn.Conv2d(3, 16, kernel_size=3, padding=1),
-            nn.GELU(),
-            nn.Conv2d(16, 32, kernel_size=3, padding=1),
-            nn.GELU()
+        
+        self.patch_proj = nn.Sequential(
+            nn.Linear(patch_dim, self.dim_emb),
+            nn.LayerNorm(self.dim_emb)
         )
-
-        # 2. MLP positional embedding from (x, y)
+        
+        # positional embedding from (x, y)
         self.pos_mlp = nn.Sequential(
             nn.Linear(2, self.dim_emb),
             nn.ReLU(),
             nn.Linear(self.dim_emb, self.dim_emb)
         )
-
-        # 3. Confidence score projection
-        self.score_proj = nn.Linear(1, self.dim_emb)
-
-        # 4. Transformer for patch interaction
-        self.transformer = nn.TransformerEncoderLayer(
-            d_model=self.dim_emb,
-            nhead=4,
-            dim_feedforward=256,
-            dropout=0.1,
-            batch_first=True
+        
+        # Score fusion
+        self.score_fc = nn.Sequential(
+            nn.Linear(self.dim_emb + 1, self.dim_emb),
+            nn.ReLU(),
+            nn.LayerNorm(self.dim_emb)
         )
-
-        # Optional projection if needed to reduce dimensionality
-        self.feature_proj = nn.Linear(32 * self.patch_size * self.patch_size, self.dim_emb)
 
     def forward(self, data):
         patches0 = data['view0']['patches']  # (B, N, 3, H, W)
@@ -55,35 +43,19 @@ class PatchEncoder(nn.Module):
         scores0 = data['view0']['scores']  # (B, N)
         scores1 = data['view1']['scores']
 
-        # Merge views
         patches = torch.cat([patches0, patches1], dim=1)  # (B, 2N, 3, H, W)
         coords = torch.cat([coords0, coords1], dim=1)     # (B, 2N, 2)
         scores = torch.cat([scores0, scores1], dim=1)     # (B, 2N)
 
-        B, N2, C, H, W = patches.shape
-        patches = patches.view(B * N2, C, H, W)
-        feat_maps = self.conv(patches)  # (B*2N, 32, H, W)
+        B, N, C, H, W = patches.shape
+        flat_patches = patches.view(B, N, -1)  # (B, 2N, 3*H*W)
+        patch_feats = self.patch_proj(flat_patches)  # (B, 2N, D)
 
-        # Flatten to vector
-        flat_feats = feat_maps.view(B, N2, -1)  # (B, 2N, 32*H*W)
-        flat_feats = self.feature_proj(flat_feats)  # (B, 2N, D)
-
-        # Positional embedding from (x, y)
         pos_emb = self.pos_mlp(coords)  # (B, 2N, D)
-        flat_feats = flat_feats + pos_emb
+        patch_feats = patch_feats + pos_emb
 
-        # Modulate by confidence score
-        score_emb = self.score_proj(scores.unsqueeze(-1))  # (B, 2N, D)
-        flat_feats = flat_feats * score_emb
-
-        # Mask zero-confidence patches
-        mask = (scores > 0).float().unsqueeze(-1)  # (B, 2N, 1)
-        flat_feats = flat_feats * mask
-
-        # Apply transformer layer
-        encoded = self.transformer(flat_feats)  # (B, 2N, D)
-
-        return encoded
+        fused = torch.cat([patch_feats, scores.unsqueeze(-1)], dim=-1)
+        return self.score_fc(fused)  # (B, 2N, D)
 
     
 class ImagePairEncoder(nn.Module):
@@ -137,10 +109,10 @@ class ImagePairEncoder(nn.Module):
             param.requires_grad = False
 
         # Unfreeze last 2 transformer blocks
-        if hasattr(self.vit, 'blocks'):
-            for block in self.vit.blocks[-2:]:
-                for param in block.parameters():
-                    param.requires_grad = True
+        #if hasattr(self.vit, 'blocks'):
+        #    for block in self.vit.blocks[-2:]:
+        #        for param in block.parameters():
+        #            param.requires_grad = True
         
     def forward(self, data):
         im0 = torch.clamp(data['view0']['image'], 0, 1)
@@ -242,10 +214,7 @@ class PhotoVoModel(nn.Module):
         data['view0']['scores'] = scores0_valid
         data['view1']['scores'] = scores1_valid
 
-        # Run the new PatchEncoder (CNN + Transformer + MLP positional + confidence fusion)
-        patch_embs = self.penc(data)  # Output: (B, 2N, D)
-
-        # Run motion estimator using both image and patch-level embeddings
+        patch_embs = self.penc(data) 
         output = self.motion_estimator(image_embs, patch_embs)
         data['pred_vo'] = output
 
