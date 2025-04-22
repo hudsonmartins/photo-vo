@@ -136,11 +136,7 @@ class PhotoVoModel(nn.Module):
         super().__init__()
         self.config = config
         self.imgenc = ImagePairEncoder(config)
-        
         self.matcher = gf.models.get_model(config.features_model.name)(config.features_model)
-        for param in self.matcher.parameters():
-            param.requires_grad = False
-
         self.penc = PatchEncoder(config)
         self.motion_estimator = MotionEstimator(config)
         self.features = None
