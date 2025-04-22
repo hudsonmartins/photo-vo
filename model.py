@@ -103,16 +103,6 @@ class ImagePairEncoder(nn.Module):
         checkpoint = torch.load('weights/tsformer-vo.tar', map_location=torch.device("cuda"))
         self.vit.load_state_dict(checkpoint['model'])
         self.vit.head = torch.nn.Identity() #remove last linear layer
-
-        # Freeze all ViT parameters
-        for param in self.vit.parameters():
-            param.requires_grad = False
-
-        # Unfreeze last 2 transformer blocks
-        #if hasattr(self.vit, 'blocks'):
-        #    for block in self.vit.blocks[-2:]:
-        #        for param in block.parameters():
-        #            param.requires_grad = True
         
     def forward(self, data):
         im0 = torch.clamp(data['view0']['image'], 0, 1)

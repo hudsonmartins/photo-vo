@@ -12,9 +12,7 @@ from gluefactory.geometry.wrappers import Pose
 
 from kitti2 import get_iterator
 from model import get_photo_vo_model
-from model_tsformer import build_model
-from utils import batch_to_device, debug_batch_kitti, draw_camera_poses
-from loss import pose_error
+from utils import batch_to_device, draw_camera_poses, draw_matches
 
 
 # Setup logging
@@ -41,37 +39,11 @@ default_train_conf = {
 }
 default_train_conf = OmegaConf.create(default_train_conf)
 
-def do_evaluation(val_loader, val_size, model, device, n_images=5):
-    avg_losses = {}
-    all_figs = {}
-
-    for it, (images, poses) in enumerate(tqdm(val_loader, total=val_size)):
-        data = {'view0': {'image': images[:, 0], 'depth': None, 'camera': None},
-                'view1': {'image': images[:, 1], 'depth': None, 'camera': None},
-                'T_0to1': Pose.from_Rt(torch.eye(3).repeat(images.shape[0], 1, 1), poses[:, :3])}
-        data = batch_to_device(data, device)
-        with torch.no_grad():
-            output = model(data)
-            loss, output = model.loss_kitti(output)
-            if torch.isnan(loss['total']).any():
-                logger.info(f"Detected NAN, skipping iteration {it}")
-                continue
-            avg_losses = {k: v + loss[k].mean() for k, v in loss.items()}
-            if(it < n_images):
-                figs = {k+'_'+str(it): v for k, v in debug_batch_kitti(output, figs_dpi=700).items()}
-                all_figs = {**all_figs, **figs}
-
-        if(it>=val_size):
-            break
-    if not avg_losses:
-        return None, None
-    avg_losses = {k: v / val_size for k, v in avg_losses.items()}
-
-    return avg_losses, all_figs
 
 def compute_loss(pred, gt, criterion):
     loss = criterion(pred, gt.float())
     return loss
+
 
 def val_epoch(model, val_loader, criterion, device):
     epoch_loss = 0
@@ -88,8 +60,14 @@ def val_epoch(model, val_loader, criterion, device):
             gt = gt.to(device)
             loss = compute_loss(estimated_pose, gt, criterion)
             epoch_loss += loss.item()
-            tepoch.set_postfix(val_loss=loss.item())    
-    return epoch_loss / len(val_loader), [estimated_pose[0].detach().cpu(), gt[0].detach().cpu()]
+            tepoch.set_postfix(val_loss=loss.item())
+            sample = {'estimated': estimated_pose[0].detach().cpu(),
+                     'gt': gt[0].detach().cpu(),
+                     'view0': output['view0'],
+                     'view1': output['view1']}
+        
+    return epoch_loss / len(val_loader), sample
+
 
 def train_epoch(model, train_loader, criterion, optimizer, epoch, tensorboard_writer, device):
     epoch_loss = 0
@@ -116,12 +94,14 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, tensorboard_wr
             tepoch.set_postfix(loss=loss.item())
             tensorboard_writer.add_scalar("train/loss", loss.item(), iter)
             iter += 1
+            
         origin = torch.tensor([0, 0, 0, 0, 0, 0])
         fig_cameras = draw_camera_poses([origin[3:], estimated_pose[0,3:].detach().cpu(), gt[0,3:].detach().cpu()],
                                         [origin[:3], estimated_pose[0,:3].detach().cpu(), gt[0,:3].detach().cpu()],
                                         ["origin", "estimated", "gt"], dpi=700)
         tensorboard_writer.add_figure("train/poses", fig_cameras, iter)
     return epoch_loss / len(train_loader)  
+
 
 def train_tsformer(model, train_loader, val_loader, optimizer, device, config):
     criterion = torch.nn.MSELoss()
@@ -151,12 +131,23 @@ def train_tsformer(model, train_loader, val_loader, optimizer, device, config):
                 "config": OmegaConf.to_container(config, resolve=True),
             }, os.path.join(args.experiment, "best_model.tar"))
             origin = torch.tensor([0, 0, 0, 0, 0, 0])
-            fig_cameras = draw_camera_poses([origin[3:], sample[0][3:], sample[1][3:]],
-                                            [origin[:3], sample[0][:3], sample[1][:3]],
+            fig_cameras = draw_camera_poses([origin[3:], sample['estimated'][3:], sample['gt'][3:]],
+                                            [origin[:3], sample['estimated'][:3], sample['gt'][:3]],
                                             ["origin", "estimated", "gt"], dpi=700)
+            img0 = sample['view0']['image'][0].detach().cpu()
+            img1 = sample['view1']['image'][0].detach().cpu()
+            #convert img to h,w,c
+            img0 = img0.permute(1, 2, 0).numpy()*255
+            img1 = img1.permute(1, 2, 0).numpy()*255
+            img0 = img0.astype(np.uint8)
+            img1 = img1.astype(np.uint8)
+            fig_matches = draw_matches(img0, img1,
+                                       sample['view0']['patches_coords'][0].detach().cpu().numpy(),
+                                       sample['view1']['patches_coords'][0].detach().cpu().numpy(), 
+                                       sample['view0']['scores'][0].detach().cpu().numpy())
             writer.add_figure("val/poses", fig_cameras, epoch)
-        
-        
+            writer.add_image("val/matches", fig_matches.transpose(2, 0, 1)/255.0, epoch)
+               
 
 def get_optimizer(params, model_args):
     method = model_args["optimizer"]
@@ -180,6 +171,7 @@ def get_optimizer(params, model_args):
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
     return optimizer
+
 
 def main(args):
     conf = OmegaConf.load(args.conf)
