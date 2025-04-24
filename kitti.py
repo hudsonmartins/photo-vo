@@ -33,11 +33,11 @@ def get_iterator(data_path, size, batch_size, sequences_names, max_skip, train=T
     if(train):
         preprocess = transforms.Compose([
             transforms.Resize(size),
+            transforms.ToTensor(),
             transforms.RandomApply([transforms.ColorJitter(0.3, 0.3, 0.3, 0.1)], p=0.5),
             transforms.RandomApply([transforms.GaussianBlur(5, (0.1, 1.0))], p=0.3),
-            transforms.ToTensor(),
             transforms.Lambda(lambda x: add_gamma(x) if random.random() < 0.5 else x),            
-            transforms.Lambda(lambda x: add_occlusion(x) if random.random() < 0.1 else x)
+            #transforms.Lambda(lambda x: add_occlusion(x) if random.random() < 0.1 else x)
         ])
         
         kitti = KITTI(os.path.join(data_path, 'sequences'), 
