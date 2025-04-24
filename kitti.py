@@ -11,6 +11,7 @@ import random
 
 def add_gamma(img):
     gamma = random.uniform(0.5, 2.0)
+    img = torch.clamp(img, min=1e-5)
     return img ** gamma
 
 def add_occlusion(img):
@@ -35,8 +36,8 @@ def get_iterator(data_path, size, batch_size, sequences_names, max_skip, train=T
             transforms.RandomApply([transforms.ColorJitter(0.3, 0.3, 0.3, 0.1)], p=0.5),
             transforms.RandomApply([transforms.GaussianBlur(5, (0.1, 1.0))], p=0.3),
             transforms.ToTensor(),
-            transforms.Lambda(lambda x: add_gamma(x) if random.random() < 1.0 else x),            
-            transforms.Lambda(lambda x: add_occlusion(x) if random.random() < 0.2 else x)
+            transforms.Lambda(lambda x: add_gamma(x) if random.random() < 0.5 else x),            
+            transforms.Lambda(lambda x: add_occlusion(x) if random.random() < 0.1 else x)
         ])
         
         kitti = KITTI(os.path.join(data_path, 'sequences'), 
