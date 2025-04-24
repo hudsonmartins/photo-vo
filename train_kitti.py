@@ -10,7 +10,7 @@ from torch.utils.tensorboard import SummaryWriter
 from omegaconf import OmegaConf
 from gluefactory.geometry.wrappers import Pose
 
-from kitti2 import get_iterator
+from kitti import get_iterator
 from model import get_photo_vo_model
 from utils import batch_to_device, draw_camera_poses, draw_matches
 
@@ -50,7 +50,7 @@ def val_epoch(model, val_loader, criterion, device):
     with tqdm(val_loader, unit="batch") as tepoch:
         for images, gt in tepoch:
             tepoch.set_description(f"Validating ")
-            images = images.transpose(1, 2).to(device)
+            #images = images.transpose(1, 2).to(device)
             data = {'view0': {'image': images[:, 0], 'depth': None, 'camera': None},
                     'view1': {'image': images[:, 1], 'depth': None, 'camera': None},
                     'T_0to1': Pose.from_Rt(torch.eye(3).repeat(images.shape[0], 1, 1), gt[:, :3])}
@@ -65,7 +65,6 @@ def val_epoch(model, val_loader, criterion, device):
                      'gt': gt[0].detach().cpu(),
                      'view0': output['view0'],
                      'view1': output['view1']}
-        
     return epoch_loss / len(val_loader), sample
 
 
@@ -76,7 +75,7 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, tensorboard_wr
     with tqdm(train_loader, unit="batch") as tepoch:
         for images, gt in tepoch:
             tepoch.set_description(f"Epoch {epoch}")
-            images = images.transpose(1, 2).to(device)
+            #images = images.transpose(1, 2).to(device)
             
             data = {'view0': {'image': images[:, 0], 'depth': None, 'camera': None},
                     'view1': {'image': images[:, 1], 'depth': None, 'camera': None},
@@ -86,7 +85,7 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, tensorboard_wr
             estimated_pose = output['pred_vo']
             gt = gt.to(device)
             loss = compute_loss(estimated_pose, gt, criterion)
-
+            
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -196,9 +195,9 @@ def main(args):
         torch.cuda.manual_seed_all(conf.data.seed)
 
     train_loader = get_iterator(conf.data.path, conf.data.size, conf.data.batch_size,
-                           conf.data.train_sequences, conf.data.max_skip)
+                           conf.data.train_sequences, conf.data.max_skip, train=True)
     val_loader = get_iterator(conf.data.path, conf.data.size, conf.data.batch_size,
-                           conf.data.val_sequences, 1)
+                           conf.data.val_sequences, 0, train=True)
 
     os.makedirs(args.experiment, exist_ok=True)
         
