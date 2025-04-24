@@ -197,7 +197,7 @@ def main(args):
     train_loader = get_iterator(conf.data.path, conf.data.size, conf.data.batch_size,
                            conf.data.train_sequences, conf.data.max_skip, train=True)
     val_loader = get_iterator(conf.data.path, conf.data.size, conf.data.batch_size,
-                           conf.data.val_sequences, 0, train=True)
+                           conf.data.val_sequences, 0, train=False)
 
     os.makedirs(args.experiment, exist_ok=True)
         
