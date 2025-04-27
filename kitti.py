@@ -9,25 +9,30 @@ from torchvision import transforms
 import random
 
 
-def add_gamma(img):
-    gamma = random.uniform(0.5, 2.0)
-    img = torch.clamp(img, min=1e-5)
-    return img ** gamma
 
 def add_occlusion(img):
-    h, w = img.shape[1:]
+    # Get image dimensions (C, H, W)
+    c, h, w = img.shape
+    
+    # Create mask with same shape as image
     mask = torch.ones_like(img)
-
-    occ_h = h // 4  # height of occlusion
-    occ_w = w // 4  # width of occlusion
-
-    center_h = h // 2
-    center_w = w // 2
-
-    mask[:, center_h - occ_h//2 : center_h + occ_h//2,
-             center_w - occ_w//2 : center_w + occ_w//2] = 0
+    
+    # Occlusion size (1/4 of image dimensions)
+    occ_h = h // 4
+    occ_w = w // 4
+    
+    # Random starting positions (ensure occlusion stays within image bounds)
+    y_start = torch.randint(0, h - occ_h, (1,)).item()
+    x_start = torch.randint(0, w - occ_w, (1,)).item()
+    
+    # Calculate end positions
+    y_end = y_start + occ_h
+    x_end = x_start + occ_w
+    
+    # Apply occlusion mask
+    mask[:, y_start:y_end, x_start:x_end] = 0
+    
     return img * mask
-
 
 def get_iterator(data_path, size, batch_size, sequences_names, max_skip, train=True):
     if(train):
@@ -36,8 +41,7 @@ def get_iterator(data_path, size, batch_size, sequences_names, max_skip, train=T
             transforms.ToTensor(),
             transforms.RandomApply([transforms.ColorJitter(0.3, 0.3, 0.3, 0.1)], p=0.5),
             transforms.RandomApply([transforms.GaussianBlur(5, (0.1, 1.0))], p=0.3),
-            transforms.Lambda(lambda x: add_gamma(x) if random.random() < 0.5 else x),            
-            #transforms.Lambda(lambda x: add_occlusion(x) if random.random() < 0.1 else x)
+            transforms.Lambda(lambda x: add_occlusion(x) if random.random() < 0.1 else x)
         ])
         
         kitti = KITTI(os.path.join(data_path, 'sequences'), 
@@ -167,7 +171,7 @@ class KITTI(torch.utils.data.Dataset):
         # load images
         img1 = Image.open(pair['frame1']).convert('RGB')
         img2 = Image.open(pair['frame2']).convert('RGB')
-           
+
         if self.transform:
             img1 = self.transform(img1)
             img2 = self.transform(img2)
@@ -209,36 +213,42 @@ class KITTI(torch.utils.data.Dataset):
         return pairs
 
     def compute_relative_pose(self, pose1, pose2):
-        # convert poses to homogeneous coordinates
-        T1 = np.vstack([pose1, [0, 0, 0, 1]])
-        T2 = np.vstack([pose2, [0, 0, 0, 1]])
+        try:
+            # convert poses to homogeneous coordinates
+            T1 = np.vstack([np.nan_to_num(pose1), [0, 0, 0, 1]])
+            T2 = np.vstack([np.nan_to_num(pose2), [0, 0, 0, 1]])
+            T_rel = np.linalg.inv(T1) @ T2
+            
+            R = T_rel[:3, :3]
+            t = T_rel[:3, 3]
+            
+            # Normalize angles and translation
+            angles = rotation_to_euler(R, seq='zyx')
+            angles = (np.asarray(angles) - self.mean_angles) / self.std_angles
+            t = (np.asarray(t) - self.mean_t) / self.std_t
+            
+            angles = np.nan_to_num(angles, 0.0)
+            t = np.nan_to_num(t, 0.0)
+            
+            return torch.FloatTensor(np.concatenate([angles, t]))
+        except:
+            return torch.zeros(6)
         
-        T_rel = np.linalg.inv(T1) @ T2
-        
-        R = T_rel[:3, :3]
-        t = T_rel[:3, 3]
-        
-        angles = rotation_to_euler(R, seq='zyx')
-        angles = (np.asarray(angles) - self.mean_angles) / self.std_angles
-        t = (np.asarray(t) - self.mean_t) / self.std_t
-        
-        return torch.FloatTensor(np.concatenate([angles, t]))
-
 if __name__ == "__main__":
     # Example usage    
     loader = get_iterator(
         data_path='/home/hudson/Desktop/Unicamp/datasets/kitti',
         size=(640, 640),
         batch_size=5,
-        sequences_names=["03"],
-        max_skip=0
+        sequences_names=["08"],
+        max_skip=3
     )
     for i, (imgs, y) in enumerate(loader):
+            
         print(imgs)
         print(y)
         print(imgs.shape)
         print(y.shape)
-        
         imgs = imgs
 
         img1 = imgs[0][0].permute(1, 2, 0).numpy()
@@ -252,3 +262,4 @@ if __name__ == "__main__":
         plt.imshow(img2)
         plt.show()
         plt.close()
+        
