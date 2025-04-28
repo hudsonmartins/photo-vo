@@ -99,6 +99,7 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, tensorboard_wr
                     logger.error("Images contain NaN values!")
                 else:
                     logger.info("Images do NOT contain NaN values.")
+                raise ValueError("NaN detected during training!")
             
             optimizer.zero_grad()
             loss.backward()
