@@ -170,11 +170,11 @@ class PhotoVoModel(nn.Module):
                     b_scores0_valid = scores0[b][i0].unsqueeze(0) if b_scores0_valid is None else torch.cat([b_scores0_valid, scores0[b][i0].unsqueeze(0)], dim=0)
                     b_scores1_valid = scores1[b][i1].unsqueeze(0) if b_scores1_valid is None else torch.cat([b_scores1_valid, scores1[b][i1].unsqueeze(0)], dim=0)
                 else:
-                    # Invalid match -> fill with NaNs and zeros
-                    nan_kpt = torch.full((1, kpts0.size(2)), float('nan'), dtype=kpts0.dtype, device=kpts0.device)
+                    # Invalid match -> fill with -1s and zeros
+                    invalid_kpts = torch.full((1, kpts0.size(2)), -1.0, dtype=kpts0.dtype, device=kpts0.device)
                     zero_score = torch.zeros(1, dtype=scores0.dtype, device=scores0.device)
-                    b_kpts0_valid = nan_kpt if b_kpts0_valid is None else torch.cat([b_kpts0_valid, nan_kpt], dim=0)
-                    b_kpts1_valid = nan_kpt if b_kpts1_valid is None else torch.cat([b_kpts1_valid, nan_kpt], dim=0)
+                    b_kpts0_valid = invalid_kpts if b_kpts0_valid is None else torch.cat([b_kpts0_valid, invalid_kpts], dim=0)
+                    b_kpts1_valid = invalid_kpts if b_kpts1_valid is None else torch.cat([b_kpts1_valid, invalid_kpts], dim=0)
                     b_scores0_valid = zero_score if b_scores0_valid is None else torch.cat([b_scores0_valid, zero_score], dim=0)
                     b_scores1_valid = zero_score if b_scores1_valid is None else torch.cat([b_scores1_valid, zero_score], dim=0)
 
@@ -187,10 +187,6 @@ class PhotoVoModel(nn.Module):
         # Extract local patches from both views using valid keypoints
         patches0 = get_patches(data['view0']['image'], kpts0_valid, self.config.photo_vo.model.patch_size)
         patches1 = get_patches(data['view1']['image'], kpts1_valid, self.config.photo_vo.model.patch_size)
-
-        # Replace NaNs with -1 for invalid patches
-        patches0 = torch.nan_to_num(patches0, nan=-1.0)
-        patches1 = torch.nan_to_num(patches1, nan=-1.0)
 
         # Store patch-related info in data
         data['view0']['patches'] = patches0
