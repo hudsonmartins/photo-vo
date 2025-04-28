@@ -91,7 +91,7 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, tensorboard_wr
 
                 logger.error(f"Images shape: {images.shape}")
                 logger.error(f"GT : {gt}")
-                logger.error(f"Estimated pose: {estimated_pose[0]}")
+                logger.error(f"Estimated pose: {estimated_pose}")
                 logger.error(f"Data keys: {list(data.keys())}")
                 logger.error(f"Model output keys: {list(output.keys())}")
                 
