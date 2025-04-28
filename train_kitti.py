@@ -65,6 +65,7 @@ def val_epoch(model, val_loader, criterion, device):
                      'gt': gt[0].detach().cpu(),
                      'view0': output['view0'],
                      'view1': output['view1']}
+            
     return epoch_loss / len(val_loader), sample
 
 
@@ -85,6 +86,19 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, tensorboard_wr
             estimated_pose = output['pred_vo']
             gt = gt.to(device)
             loss = compute_loss(estimated_pose, gt, criterion)
+            if torch.isnan(loss):
+                logger.error("Encountered NaN loss!")
+
+                logger.error(f"Images shape: {images.shape}")
+                logger.error(f"GT : {gt}")
+                logger.error(f"Estimated pose: {estimated_pose[0]}")
+                logger.error(f"Data keys: {list(data.keys())}")
+                logger.error(f"Model output keys: {list(output.keys())}")
+                
+                if torch.isnan(images).any():
+                    logger.error("Images contain NaN values!")
+                else:
+                    logger.info("Images do NOT contain NaN values.")
             
             optimizer.zero_grad()
             loss.backward()

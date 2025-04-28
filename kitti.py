@@ -213,26 +213,23 @@ class KITTI(torch.utils.data.Dataset):
         return pairs
 
     def compute_relative_pose(self, pose1, pose2):
-        try:
-            # convert poses to homogeneous coordinates
-            T1 = np.vstack([np.nan_to_num(pose1), [0, 0, 0, 1]])
-            T2 = np.vstack([np.nan_to_num(pose2), [0, 0, 0, 1]])
-            T_rel = np.linalg.inv(T1) @ T2
-            
-            R = T_rel[:3, :3]
-            t = T_rel[:3, 3]
-            
-            # Normalize angles and translation
-            angles = rotation_to_euler(R, seq='zyx')
-            angles = (np.asarray(angles) - self.mean_angles) / self.std_angles
-            t = (np.asarray(t) - self.mean_t) / self.std_t
-            
-            angles = np.nan_to_num(angles, 0.0)
-            t = np.nan_to_num(t, 0.0)
-            
-            return torch.FloatTensor(np.concatenate([angles, t]))
-        except:
-            return torch.zeros(6)
+        # convert poses to homogeneous coordinates
+        T1 = np.vstack([pose1, [0, 0, 0, 1]])
+        T2 = np.vstack([pose2, [0, 0, 0, 1]])
+        T_rel = np.dot(np.linalg.inv(T1), T2)
+        
+        R = T_rel[:3, :3]
+        t = T_rel[:3, 3]
+        
+        # Normalize angles and translation
+        angles = rotation_to_euler(R, seq='zyx')
+        angles = (np.asarray(angles) - self.mean_angles) / self.std_angles
+        t = (np.asarray(t) - self.mean_t) / self.std_t
+        
+        angles = np.nan_to_num(angles, 0.0)
+        t = np.nan_to_num(t, 0.0)
+        
+        return torch.FloatTensor(np.concatenate([angles, t]))
         
 if __name__ == "__main__":
     # Example usage    
