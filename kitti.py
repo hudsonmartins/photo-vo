@@ -1,75 +1,11 @@
 import glob
 import os
-import pandas as pd
 import numpy as np
 from PIL import Image
 import torch
 import matplotlib.pyplot as plt
-from torchvision import transforms
 import random
 
-def add_gamma(img):
-    # Apply gamma correction
-    gamma = random.uniform(0.5, 2.0)
-    img = torch.clamp(img, min=1e-5)
-    return img ** gamma
-
-def add_occlusion(img):
-    # Get image dimensions (C, H, W)
-    c, h, w = img.shape
-    
-    # Create mask with same shape as image
-    mask = torch.ones_like(img)
-    
-    # Occlusion size (1/4 of image dimensions)
-    occ_h = h // 4
-    occ_w = w // 4
-    
-    # Random starting positions (ensure occlusion stays within image bounds)
-    y_start = torch.randint(0, h - occ_h, (1,)).item()
-    x_start = torch.randint(0, w - occ_w, (1,)).item()
-    
-    # Calculate end positions
-    y_end = y_start + occ_h
-    x_end = x_start + occ_w
-    
-    # Apply occlusion mask
-    mask[:, y_start:y_end, x_start:x_end] = 0
-    
-    return img * mask
-
-def get_iterator(data_path, size, batch_size, sequences_names, max_skip, train=True):
-    if(train):
-        preprocess = transforms.Compose([
-            transforms.Resize(size),
-            transforms.ToTensor(),
-            transforms.Lambda(lambda x: add_gamma(x) if random.random() < 0.3 else x),
-            transforms.RandomApply([transforms.ColorJitter(0.3, 0.3, 0.3, 0.1)], p=0.5),
-            transforms.RandomApply([transforms.GaussianBlur(5, (0.1, 1.0))], p=0.3),
-            transforms.Lambda(lambda x: add_occlusion(x) if random.random() < 0.1 else x)
-        ])
-        
-        kitti = KITTI(os.path.join(data_path, 'sequences'), 
-                    os.path.join(data_path, 'poses'), 
-                    transform=preprocess, 
-                    sequences=sequences_names, 
-                    max_skip=max_skip
-                )
-        return torch.utils.data.DataLoader(kitti, batch_size=batch_size, shuffle=True)
-    else:
-        preprocess = transforms.Compose([
-            transforms.Resize(size),
-            transforms.ToTensor(),
-        ])
-        
-        kitti = KITTI(os.path.join(data_path, 'sequences'), 
-                    os.path.join(data_path, 'poses'), 
-                    transform=preprocess, 
-                    sequences=sequences_names, 
-                    max_skip=max_skip
-                )
-        return torch.utils.data.DataLoader(kitti, batch_size=batch_size, shuffle=False)
-    
 
 def rotation_to_euler(M, cy_thresh=None, seq='zyx'):
     M = np.asarray(M)
@@ -131,7 +67,7 @@ class KITTI(torch.utils.data.Dataset):
         self.std_t = np.array([2.5584e-2, 1.8545e-2, 3.0352e-1])
 
         self.sequences = sequences
-
+        
         frames, seqs = self.read_frames()
         gt = self.read_gt()
 
@@ -150,21 +86,16 @@ class KITTI(torch.utils.data.Dataset):
 
     def read_gt(self):
         # Read ground truth
-        if self.read_gt:
-            gt = []
-            for sequence in self.sequences:
-                with open(os.path.join(self.gt_path, sequence + ".txt")) as f:
-                    lines = f.readlines()
+        gt = []
+        for sequence in self.sequences:
+            with open(os.path.join(self.gt_path, sequence + ".txt")) as f:
+                lines = f.readlines()
 
-                # convert poses to float
-                for line_idx, line in enumerate(lines):
-                    line = line.strip().split()
-                    line = [float(x) for x in line]
-                    gt.append(line)
-
-        else:
-            gt = None
-
+            # convert poses to float
+            for line_idx, line in enumerate(lines):
+                line = line.strip().split()
+                line = [float(x) for x in line]
+                gt.append(line)
         return gt
     
     def __len__(self):
@@ -235,33 +166,4 @@ class KITTI(torch.utils.data.Dataset):
         t = np.nan_to_num(t, 0.0)
         
         return torch.FloatTensor(np.concatenate([angles, t]))
-        
-if __name__ == "__main__":
-    # Example usage    
-    loader = get_iterator(
-        data_path='/home/hudson/Desktop/Unicamp/datasets/kitti',
-        size=(640, 640),
-        batch_size=5,
-        sequences_names=["08"],
-        max_skip=3
-    )
-    for i, (imgs, y) in enumerate(loader):
-            
-        print(imgs)
-        print(y)
-        print(imgs.shape)
-        print(y.shape)
-        imgs = imgs
-
-        img1 = imgs[0][0].permute(1, 2, 0).numpy()
-        img2 = imgs[0][1].permute(1, 2, 0).numpy()
-        img1 = (img1 * 255).astype(np.uint8)
-        img2 = (img2 * 255).astype(np.uint8)
-        
-        plt.subplot(1, 2, 1)
-        plt.imshow(img1)
-        plt.subplot(1, 2, 2)
-        plt.imshow(img2)
-        plt.show()
-        plt.close()
         

@@ -10,7 +10,7 @@ from torch.utils.tensorboard import SummaryWriter
 from omegaconf import OmegaConf
 from gluefactory.geometry.wrappers import Pose
 
-from kitti import get_iterator
+from iterators import get_iterator
 from model import get_photo_vo_model
 from utils import batch_to_device, draw_camera_poses, draw_matches
 
@@ -61,11 +61,11 @@ def val_epoch(model, val_loader, criterion, device):
             loss = compute_loss(estimated_pose, gt, criterion)
             epoch_loss += loss.item()
             tepoch.set_postfix(val_loss=loss.item())
+            sample_idx = random.randint(0, len(images) - 1)
             sample = {'estimated': estimated_pose[0].detach().cpu(),
                      'gt': gt[0].detach().cpu(),
                      'view0': output['view0'],
-                     'view1': output['view1']}
-            
+                     'view1': output['view1']}            
     return epoch_loss / len(val_loader), sample
 
 
@@ -209,10 +209,8 @@ def main(args):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(conf.data.seed)
 
-    train_loader = get_iterator(conf.data.path, conf.data.size, conf.data.batch_size,
-                           conf.data.train_sequences, conf.data.max_skip, train=True)
-    val_loader = get_iterator(conf.data.path, conf.data.size, conf.data.batch_size,
-                           conf.data.val_sequences, 0, train=False)
+    train_loader = get_iterator(train=True, **conf.data)
+    val_loader = get_iterator(train=False, **conf.data)
 
     os.makedirs(args.experiment, exist_ok=True)
         
@@ -244,7 +242,7 @@ def main(args):
         for param in model.matcher.parameters():
             param.requires_grad = False 
 
-    logger.info(f"Training with sequences {conf.data.train_sequences} and validation with {conf.data.val_sequences}")
+    logger.info(f"Training with dataset config {conf.data}")
     train_tsformer(model, train_loader, val_loader, optimizer, device, conf)
 
 if __name__ == "__main__":
