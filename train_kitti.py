@@ -209,8 +209,8 @@ def main(args):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(conf.data.seed)
 
-    train_loader = get_iterator(train=True, **conf.data)
-    val_loader = get_iterator(train=False, **conf.data)
+    train_loader = get_iterator(**conf.data, train=True)
+    val_loader = get_iterator(**conf.data, train=False)
 
     os.makedirs(args.experiment, exist_ok=True)
         

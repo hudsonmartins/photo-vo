@@ -38,23 +38,23 @@ def add_occlusion(img):
     return img * mask
 
 
-def get_iterator(datasets_names, train=False, **kwargs):
+def get_iterator(datasets_names, train, **kwargs):
     """
     Create a combined iterator for multiple datasets.
     """
     datasets = []
     for dataset in datasets_names:
         if(dataset == 'kitti'):
-            datasets.append(get_kitti(**kwargs['kitti']))
+            datasets.append(get_kitti(**kwargs['kitti'], train=train))
         elif(dataset == 'queenscamp'):
-            datasets.append(get_queenscamp(**kwargs['queenscamp']))
+            datasets.append(get_queenscamp(**kwargs['queenscamp'], train=train))
         else:
             raise ValueError(f"Unknown dataset: {dataset}")
         
     return torch.utils.data.DataLoader(torch.utils.data.ConcatDataset(datasets), batch_size=kwargs['batch_size'], shuffle=train)
    
 
-def get_kitti(data_path, size, train_sequences, val_sequences, max_skip, train=True):
+def get_kitti(data_path, size, train_sequences, val_sequences, max_skip, train):
     if(train):
         preprocess = transforms.Compose([
             transforms.Resize(size),
@@ -69,7 +69,6 @@ def get_kitti(data_path, size, train_sequences, val_sequences, max_skip, train=T
             transforms.Resize(size),
             transforms.ToTensor(),
         ])
-        
     return KITTI(os.path.join(data_path, 'sequences'), 
                 os.path.join(data_path, 'poses'), 
                 transform=preprocess, 
@@ -77,7 +76,7 @@ def get_kitti(data_path, size, train_sequences, val_sequences, max_skip, train=T
                 max_skip=max_skip)
     
 
-def get_queenscamp(data_path, size, train_sequences, val_sequences, max_skip, train=True):
+def get_queenscamp(data_path, size, train_sequences, val_sequences, max_skip, train):
     if train:
         preprocess = transforms.Compose([
             transforms.Resize(size),
@@ -110,14 +109,14 @@ if __name__ == "__main__":
             'size': (640, 640),
             'train_sequences': ["08"],
             'val_sequences': ["08"],
-            'max_skip': 3
+            'max_skip': 5
         },
         queenscamp = {
             'data_path': '/home/hudson/Desktop/Unicamp/datasets/queenscamp',
             'train_sequences': ["15"],
             'val_sequences': ["15"],
             'size': (640, 640),
-            'max_skip': 3
+            'max_skip': 5
         },
         batch_size=1
     )
