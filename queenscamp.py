@@ -16,24 +16,28 @@ class QueensCAMP(Dataset):
     def __init__(self,
                  data_path,
                  sequences,
+                 apply_rcr=False,
+                 resize=(640, 640),
                  max_skip=0,
                  transform=None):
 
         self.data_path = data_path
         self.max_skip = max_skip
         self.transform = transform
-
+        self.resize = resize
+        self.apply_rcr = apply_rcr
         # KITTI normalization
-        self.mean_angles = np.array([1.7061e-5, 9.5582e-4, -5.5258e-5])
-        self.std_angles = np.array([2.8256e-3, 1.7771e-2, 3.2326e-3])
-        self.mean_t = np.array([-8.6736e-5, -1.6038e-2, 9.0033e-1])
-        self.std_t = np.array([2.5584e-2, 1.8545e-2, 3.0352e-1])
+        #self.mean_angles = np.array([1.7061e-5, 9.5582e-4, -5.5258e-5])
+        #self.std_angles = np.array([2.8256e-3, 1.7771e-2, 3.2326e-3])
+        #self.mean_t = np.array([-8.6736e-5, -1.6038e-2, 9.0033e-1])
+        #self.std_t = np.array([2.5584e-2, 1.8545e-2, 3.0352e-1])
 
         self.sequences = sequences
 
         frames, seqs = self.read_frames()
         gt = self.read_gt()
-        self.pairs = self.create_pairs(frames, seqs, gt)
+        Ks = self.read_K()
+        self.pairs = self.create_pairs(frames, seqs, gt, Ks)
         
 
     def read_frames(self):
@@ -70,10 +74,39 @@ class QueensCAMP(Dataset):
                     T[:3, :3] = R_mat
                     T[:3, 3] = [tx, ty, tz]
                     gt.append(T)
-        
-
         return gt
     
+    def read_K(self):
+        calib_path = os.path.join(self.data_path, 'rgb_camera_info.txt')
+        with open(calib_path, 'r') as f:
+            params = {}
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                key, value = line.split(':', 1)
+                key = key.strip()
+                value = value.strip()
+                if key in ['height', 'width']:
+                    params[key] = int(value)
+                elif key == 'distortion_model':
+                    params[key] = value.strip('"')
+                else:
+                    value = value.strip('[]')
+                    value_list = [float(v.strip()) for v in value.split(',')]
+                    params[key] = value_list
+
+        # Extract fx, fy, cx, cy from K
+        fx = params['K'][0]
+        fy = params['K'][4]
+        cx = params['K'][2]
+        cy = params['K'][5]
+
+        K_dict = {}
+        for sequence in self.sequences:
+            K_dict[sequence] = [fx, fy, cx, cy]
+        return K_dict
+
     def convert_to_kitti_frame(self, pose):
         # KITTI: x (right), y (down), z (forward)
         # QueensCAMP: x (forward), y (left), z (up)
@@ -104,8 +137,8 @@ class QueensCAMP(Dataset):
         
         # Normalize angles and translation
         angles = rotation_to_euler(R, seq='zyx')
-        angles = (np.asarray(angles) - self.mean_angles) / self.std_angles
-        t = (np.asarray(t) - self.mean_t) / self.std_t
+        #angles = (np.asarray(angles) - self.mean_angles) / self.std_angles
+        #t = (np.asarray(t) - self.mean_t) / self.std_t
         
         angles = np.nan_to_num(angles, 0.0)
         t = np.nan_to_num(t, 0.0)
@@ -113,7 +146,7 @@ class QueensCAMP(Dataset):
         return torch.FloatTensor(np.concatenate([angles, t]))
 
 
-    def create_pairs(self, frames, seqs, gt):
+    def create_pairs(self, frames, seqs, gt, Ks):
         pairs = []
         current_seq = None
         
@@ -133,10 +166,38 @@ class QueensCAMP(Dataset):
                     'frame1': frame,
                     'frame2': frames[next_idx],
                     'pose1': pose1,
-                    'pose2': pose2
+                    'pose2': pose2,
+                    'K': Ks[seq]
                 })
         
         return pairs
+
+
+    def rcr(self, img1, img2, K):
+        # Apply RCR
+        original_size = img1.size
+        
+        # Random crop parameters
+        crop_scale = random.uniform(0.4, 1.0)
+        crop_width = int(original_size[0] * crop_scale)
+        crop_height = int(original_size[1] * crop_scale)
+        x0 = random.randint(0, original_size[0] - crop_width)
+        y0 = random.randint(0, original_size[1] - crop_height)
+
+        # Crop and resize
+        img1 = img1.crop((x0, y0, x0 + crop_width, y0 + crop_height)).resize(self.resize)
+        img2 = img2.crop((x0, y0, x0 + crop_width, y0 + crop_height)).resize(self.resize)
+
+        fx, fy, cx, cy = K
+        # Adjust intrinsics
+        sx = self.resize[0] / crop_width
+        sy = self.resize[1] / crop_height
+        fx_new = fx * sx
+        fy_new = fy * sy
+        cx_new = (cx - x0) * sx
+        cy_new = (cy - y0) * sy
+        return img1, img2, [fx_new, fy_new, cx_new, cy_new]
+    
 
     def __len__(self):
         return len(self.pairs)
@@ -148,6 +209,19 @@ class QueensCAMP(Dataset):
         # load images
         img1 = Image.open(pair['frame1']).convert('RGB')
         img2 = Image.open(pair['frame2']).convert('RGB')
+        
+        if self.apply_rcr:
+            img1, img2, K = self.rcr(img1, img2, pair['K'])
+        else:
+            K = pair['K']
+            original_size = img1.size
+            img1 = img1.resize(self.resize)
+            img2 = img2.resize(self.resize)
+            
+            fx, fy, cx, cy = K
+            sx = self.resize[0] / original_size[0]
+            sy = self.resize[1] / original_size[1]
+            K = [fx * sx, fy * sy, cx * sx, cy * sy]
 
         if self.transform:
             img1 = self.transform(img1)
@@ -162,4 +236,4 @@ class QueensCAMP(Dataset):
         img2 = img2.unsqueeze(0)
         imgs = np.concatenate([img1, img2], axis=0)
         imgs = np.asarray(imgs)
-        return torch.FloatTensor(imgs), rel_pose
+        return torch.FloatTensor(imgs), rel_pose, torch.FloatTensor(K)

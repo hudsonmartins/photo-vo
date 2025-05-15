@@ -34,7 +34,19 @@ class PatchEncoder(nn.Module):
             nn.ReLU(),
             nn.LayerNorm(self.dim_emb)
         )
-
+    
+    def normalize(self, coords, K):
+            B, N, _ = coords.shape
+            fx = K[:, 0].view(B, 1, 1)
+            fy = K[:, 1].view(B, 1, 1)
+            cx = K[:, 2].view(B, 1, 1)
+            cy = K[:, 3].view(B, 1, 1)
+            x = coords[..., 0].unsqueeze(-1)
+            y = coords[..., 1].unsqueeze(-1)
+            x_norm = (x - cx) / fx
+            y_norm = (y - cy) / fy
+            return torch.cat([x_norm, y_norm], dim=-1)
+    
     def forward(self, data):
         patches0 = data['view0']['patches']  # (B, N, 3, H, W)
         patches1 = data['view1']['patches']
@@ -42,7 +54,12 @@ class PatchEncoder(nn.Module):
         coords1 = data['view1']['patches_coords']
         scores0 = data['view0']['scores']  # (B, N)
         scores1 = data['view1']['scores']
-
+        K = data['K']  # (B, 4)
+        
+        # Normalize coordinates
+        coords0 = self.normalize(coords0, K)
+        coords1 = self.normalize(coords1, K)
+        
         patches = torch.cat([patches0, patches1], dim=1)  # (B, 2N, 3, H, W)
         coords = torch.cat([coords0, coords1], dim=1)     # (B, 2N, 2)
         scores = torch.cat([scores0, scores1], dim=1)     # (B, 2N)
@@ -129,7 +146,6 @@ class MotionEstimator(nn.Module):
         fused = fused.squeeze(0)
         
         return self.fc(fused)
-
 
 class PhotoVoModel(nn.Module):
     def __init__(self, config):

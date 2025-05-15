@@ -10,6 +10,7 @@ from torch.utils.tensorboard import SummaryWriter
 from omegaconf import OmegaConf
 from gluefactory.geometry.wrappers import Pose
 
+from loss import pose_loss_norm
 from iterators import get_iterator
 from model import get_photo_vo_model
 from utils import batch_to_device, draw_camera_poses, draw_matches
@@ -48,11 +49,12 @@ def compute_loss(pred, gt, criterion):
 def val_epoch(model, val_loader, criterion, device):
     epoch_loss = 0
     with tqdm(val_loader, unit="batch") as tepoch:
-        for images, gt in tepoch:
+        for images, gt, Ks in tepoch:
             tepoch.set_description(f"Validating ")
             #images = images.transpose(1, 2).to(device)
             data = {'view0': {'image': images[:, 0], 'depth': None, 'camera': None},
                     'view1': {'image': images[:, 1], 'depth': None, 'camera': None},
+                    'K': Ks,
                     'T_0to1': Pose.from_Rt(torch.eye(3).repeat(images.shape[0], 1, 1), gt[:, :3])}
             data = batch_to_device(data, device, non_blocking=True)
             output = model(data)
@@ -61,7 +63,6 @@ def val_epoch(model, val_loader, criterion, device):
             loss = compute_loss(estimated_pose, gt, criterion)
             epoch_loss += loss.item()
             tepoch.set_postfix(val_loss=loss.item())
-            sample_idx = random.randint(0, len(images) - 1)
             sample = {'estimated': estimated_pose[0].detach().cpu(),
                      'gt': gt[0].detach().cpu(),
                      'view0': output['view0'],
@@ -74,12 +75,13 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, tensorboard_wr
     iter = (epoch - 1) * len(train_loader) + 1
 
     with tqdm(train_loader, unit="batch") as tepoch:
-        for images, gt in tepoch:
+        for images, gt, Ks in tepoch:
             tepoch.set_description(f"Epoch {epoch}")
             #images = images.transpose(1, 2).to(device)
             
             data = {'view0': {'image': images[:, 0], 'depth': None, 'camera': None},
                     'view1': {'image': images[:, 1], 'depth': None, 'camera': None},
+                    'K': Ks,
                     'T_0to1': Pose.from_Rt(torch.eye(3).repeat(images.shape[0], 1, 1), gt[:, :3])}
             data = batch_to_device(data, device, non_blocking=True)
             output = model(data)
@@ -118,12 +120,14 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, tensorboard_wr
 
 
 def train_tsformer(model, train_loader, val_loader, optimizer, device, config):
-    criterion = torch.nn.MSELoss()
+    criterion = pose_loss_norm
     writer = SummaryWriter(log_dir=config.train.tensorboard_dir)
     for epoch in range(config.train.epochs):
         model.train()
+        if(config.vit.freeze):
+            model.imgenc.eval()
         if(config.features_model.freeze):
-                model.matcher.eval()
+            model.matcher.eval()
         train_loss = train_epoch(model, train_loader, criterion, optimizer, epoch, writer, device)
         logger.info(f"Epoch {epoch}, Train loss: {train_loss}")
         writer.add_scalar("train/loss_total", train_loss, epoch)
@@ -236,12 +240,24 @@ def main(args):
             logger.info(f"Overriding learning rate from {optimizer.param_groups[0]['lr']} to {conf.train.lr}")
             for param_group in optimizer.param_groups:
                 param_group['lr'] = conf.train.lr
-
+    
+    if(conf.vit.freeze):
+        logger.info("Freezing the ViT model")
+        for param in model.imgenc.parameters():
+            param.requires_grad = False
+            
     if(conf.features_model.freeze):
         logger.info("Freezing the features model")
         for param in model.matcher.parameters():
             param.requires_grad = False 
 
+    # check trainable weights
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            logger.info(f"Trainable parameter: {name}")
+        else:
+            logger.info(f"Frozen parameter: {name}")
+            
     logger.info(f"Training with dataset config {conf.data}")
     train_tsformer(model, train_loader, val_loader, optimizer, device, conf)
 

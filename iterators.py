@@ -57,29 +57,28 @@ def get_iterator(datasets_names, train, **kwargs):
 def get_kitti(data_path, size, train_sequences, val_sequences, max_skip, train):
     if(train):
         preprocess = transforms.Compose([
-            transforms.Resize(size),
             transforms.ToTensor(),
-            transforms.Lambda(lambda x: add_gamma(x) if random.random() < 0.1 else x),
+            transforms.Lambda(lambda x: add_gamma(x) if random.random() < 0.3 else x),
             transforms.RandomApply([transforms.ColorJitter(0.3, 0.3, 0.3, 0.1)], p=0.5),
             transforms.RandomApply([transforms.GaussianBlur(5, (0.1, 1.0))], p=0.3),
             transforms.Lambda(lambda x: add_occlusion(x) if random.random() < 0.1 else x)
         ])
     else:
         preprocess = transforms.Compose([
-            transforms.Resize(size),
             transforms.ToTensor(),
         ])
     return KITTI(os.path.join(data_path, 'sequences'), 
                 os.path.join(data_path, 'poses'), 
                 transform=preprocess, 
-                sequences=train_sequences if train else val_sequences, 
+                sequences=train_sequences if train else val_sequences,
+                resize=size,
+                apply_rcr=train,
                 max_skip=max_skip)
     
 
 def get_queenscamp(data_path, size, train_sequences, val_sequences, max_skip, train):
     if train:
         preprocess = transforms.Compose([
-            transforms.Resize(size),
             transforms.ToTensor(),
             transforms.RandomApply([transforms.ColorJitter(0.3, 0.3, 0.3, 0.1)], p=0.5),
             transforms.RandomApply([transforms.GaussianBlur(5, (0.1, 1.0))], p=0.3),
@@ -87,11 +86,12 @@ def get_queenscamp(data_path, size, train_sequences, val_sequences, max_skip, tr
         ])
     else:
         preprocess = transforms.Compose([
-            transforms.Resize(size),
             transforms.ToTensor(),
         ])
 
     return QueensCAMP(data_path=data_path,
+                      resize=size,
+                      apply_rcr=train,
                       max_skip=max_skip,
                       sequences=train_sequences if train else val_sequences, 
                       transform=preprocess)
@@ -107,7 +107,7 @@ if __name__ == "__main__":
         kitti = {
             'data_path': '/home/hudson/Desktop/Unicamp/datasets/kitti',
             'size': (640, 640),
-            'train_sequences': ["08"],
+            'train_sequences': ["01","08"],
             'val_sequences': ["08"],
             'max_skip': 5
         },
@@ -121,8 +121,9 @@ if __name__ == "__main__":
         batch_size=1
     )
 
-    for i, (imgs, y) in enumerate(loader):  
-        print(y)
+    for i, (imgs, y, K) in enumerate(loader):  
+        print('y ', y)
+        print('K ', K)
         print(imgs.shape)
         print(y.shape)
         imgs = imgs

@@ -1,4 +1,27 @@
 import torch
+import torch.nn.functional as F
+
+
+def pose_loss_norm(pred, gt, eps=1e-6):
+    gt_R = gt[:, :3]
+    gt_T = gt[:, 3:]
+    pred_R = pred[:, :3]
+    pred_T = pred[:, 3:]
+
+    # Compute norms
+    norm_pred_T = torch.norm(pred_T, dim=1, keepdim=True).clamp(min=eps)
+    norm_gt_T = torch.norm(gt_T, dim=1, keepdim=True).clamp(min=eps)
+
+    # Normalize translations
+    pred_T_unit = pred_T / norm_pred_T
+    gt_T_unit = gt_T / norm_gt_T
+
+    # Compute translation and rotation losses
+    trans_loss = F.l1_loss(pred_T_unit, gt_T_unit, reduction='mean')
+    rot_loss = F.l1_loss(pred_R, gt_R, reduction='mean')
+
+    return trans_loss + rot_loss
+
 
 def get_ssim(img0, img1):
     #Extracted from https://github.com/mrharicot/monodepth/blob/master/monodepth_model.py#L91
@@ -24,8 +47,8 @@ def photometric_loss(img0, img1):
     l1 = torch.abs((img0 - img1))
     l1_loss = torch.mean(l1)
     alpha = 0.85 #Zhao et al
-    pe = alpha * ssim_loss + (1-alpha) * l1_loss
-    return pe
+    pl = alpha * ssim_loss + (1-alpha) * l1_loss
+    return pl
 
 
 def patches_photometric_loss(patches0, patches1):
