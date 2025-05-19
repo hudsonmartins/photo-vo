@@ -245,19 +245,16 @@ def main(args):
         logger.info("Freezing the ViT model")
         for param in model.imgenc.parameters():
             param.requires_grad = False
-            
+        logger.info(f"Unfreezing the last {conf.vit.unfreeze_last} layers of the ViT model")
+        
+        for param in model.imgenc.vit.blocks[-conf.vit.unfreeze_last:].parameters():
+            param.requires_grad = True
+
     if(conf.features_model.freeze):
         logger.info("Freezing the features model")
         for param in model.matcher.parameters():
             param.requires_grad = False 
 
-    # check trainable weights
-    for name, param in model.named_parameters():
-        if param.requires_grad:
-            logger.info(f"Trainable parameter: {name}")
-        else:
-            logger.info(f"Frozen parameter: {name}")
-            
     logger.info(f"Training with dataset config {conf.data}")
     train_tsformer(model, train_loader, val_loader, optimizer, device, conf)
 

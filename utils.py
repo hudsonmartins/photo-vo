@@ -173,6 +173,34 @@ def draw_matches(image0, image1, kpts0, kpts1, scores=None):
         cv2.line(out, (x0, y0), (x1 + W0, y1), color=c, thickness=1, lineType=cv2.LINE_AA)
     return out
 
+def make_intrinsics_layer(height, width, Ks):
+    """
+    Create a batch of intrinsic parameter layers for different cameras
+    """
+    
+    # Create base grid with 0.5 offset for pixel center
+    x_coords = torch.arange(width, dtype=torch.float32, device=Ks.device) + 0.5
+    y_coords = torch.arange(height, dtype=torch.float32, device=Ks.device) + 0.5
+    xx, yy = torch.meshgrid(x_coords, y_coords, indexing='xy')  # (H, W)
+    
+    # Expand to batch dimensions (B, H, W)
+    batch_size = Ks.size(0)
+    xx = xx.unsqueeze(0).expand(batch_size, -1, -1)  # (B, H, W)
+    yy = yy.unsqueeze(0).expand(batch_size, -1, -1)  # (B, H, W)
+    
+    # Expand intrinsics to match dimensions
+    fx = Ks[:, 0].unsqueeze(1).unsqueeze(2)  # (B, 1, 1)
+    fy = Ks[:, 1].unsqueeze(1).unsqueeze(2)  # (B, 1, 1)
+    ox = Ks[:, 2].unsqueeze(1).unsqueeze(2)  # (B, 1, 1)
+    oy = Ks[:, 3].unsqueeze(1).unsqueeze(2)  # (B, 1, 1)
+        
+    # Calculate normalized coordinates
+    kcx = (xx - ox) / fx
+    kcy = (yy - oy) / fy
+    
+    # Stack into final tensor (B, 2, H, W)
+    return torch.stack([kcx, kcy], dim=1)
+
 def get_patches(img, pts, patch_size=16):
     """Given an image and a set of points, return the patches around the points"""
     device = img.device

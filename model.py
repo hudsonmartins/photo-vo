@@ -6,14 +6,14 @@ from timesformer.models.vit import VisionTransformer
 from model_tsformer import build_model as tsformer
 from functools import partial
 
-from utils import get_patches, get_sorted_matches, matrix_to_euler_angles
+from utils import get_patches, make_intrinsics_layer, get_sorted_matches, matrix_to_euler_angles
 from loss import pose_error
 
 
 class PatchEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
-        patch_dim = 3 * config.photo_vo.model.patch_size ** 2
+        patch_dim = 5 * config.photo_vo.model.patch_size ** 2
         self.dim_emb = config.photo_vo.model.dim_emb
         
         self.patch_proj = nn.Sequential(
@@ -35,37 +35,20 @@ class PatchEncoder(nn.Module):
             nn.LayerNorm(self.dim_emb)
         )
     
-    def normalize(self, coords, K):
-            B, N, _ = coords.shape
-            fx = K[:, 0].view(B, 1, 1)
-            fy = K[:, 1].view(B, 1, 1)
-            cx = K[:, 2].view(B, 1, 1)
-            cy = K[:, 3].view(B, 1, 1)
-            x = coords[..., 0].unsqueeze(-1)
-            y = coords[..., 1].unsqueeze(-1)
-            x_norm = (x - cx) / fx
-            y_norm = (y - cy) / fy
-            return torch.cat([x_norm, y_norm], dim=-1)
-    
     def forward(self, data):
-        patches0 = data['view0']['patches']  # (B, N, 3, H, W)
+        patches0 = data['view0']['patches']  # (B, N, C, H, W)
         patches1 = data['view1']['patches']
         coords0 = data['view0']['patches_coords']  # (B, N, 2)
         coords1 = data['view1']['patches_coords']
         scores0 = data['view0']['scores']  # (B, N)
         scores1 = data['view1']['scores']
-        K = data['K']  # (B, 4)
         
-        # Normalize coordinates
-        coords0 = self.normalize(coords0, K)
-        coords1 = self.normalize(coords1, K)
-        
-        patches = torch.cat([patches0, patches1], dim=1)  # (B, 2N, 3, H, W)
+        patches = torch.cat([patches0, patches1], dim=1)  # (B, 2N, C, H, W)
         coords = torch.cat([coords0, coords1], dim=1)     # (B, 2N, 2)
         scores = torch.cat([scores0, scores1], dim=1)     # (B, 2N)
 
         B, N, C, H, W = patches.shape
-        flat_patches = patches.view(B, N, -1)  # (B, 2N, 3*H*W)
+        flat_patches = patches.view(B, N, -1)  # (B, 2N, C*H*W)
         patch_feats = self.patch_proj(flat_patches)  # (B, 2N, D)
 
         pos_emb = self.pos_mlp(coords)  # (B, 2N, D)
@@ -73,52 +56,28 @@ class PatchEncoder(nn.Module):
 
         fused = torch.cat([patch_feats, scores.unsqueeze(-1)], dim=-1)
         return self.score_fc(fused)  # (B, 2N, D)
-
     
 class ImagePairEncoder(nn.Module):
     def __init__(self, config):
         super(ImagePairEncoder, self).__init__()
-        model_args = {
-            "window_size": 2,  # number of frames in window
-            "pretrained_ViT": True,  # load weights from pre-trained ViT
-            "checkpoint_path": "checkpoints_tsformer/",  # path to save checkpoint
-            "checkpoint": None,  # checkpoint
-            "optimizer": "Adam",  # optimizer [Adam, SGD, Adagrad, RAdam]
-            "lr": 1e-5,  # learning rate
-            "momentum": 0.9,  # SGD momentum
-            "weight_decay": 1e-4,  # SGD momentum
-        }
-
-        model_params = {
-            "dim": 384,
-            "image_size": (640, 640), 
-            "patch_size": 16,
-            "attention_type": 'divided_space_time',  # ['divided_space_time', 'space_only','joint_space_time', 'time_only']
-            "num_frames": model_args["window_size"],
-            "num_classes": 6 * (model_args["window_size"] - 1),  # 6 DoF for each frame
-            "depth": 12,
-            "heads": 6,
-            "dim_head": 64,
-            "attn_dropout": 0.1,
-            "ff_dropout": 0.1,
-            "time_only": False,
-        }
-        self.vit = VisionTransformer(img_size=(640,640),
-                            num_classes=model_params["num_classes"],
-                            patch_size=model_params["patch_size"],
-                            embed_dim=model_params["dim"],
-                            depth=model_params["depth"],
-                            num_heads=model_params["heads"],
+        
+        self.vit = VisionTransformer(img_size=config.vit.image_size,
+                            num_classes=6,
+                            patch_size=config.vit.patch_size,
+                            embed_dim=config.vit.dim_emb,
+                            depth=config.vit.depth,
+                            num_heads=config.vit.heads,
                             mlp_ratio=4,
                             qkv_bias=True,
                             norm_layer=partial(nn.LayerNorm, eps=1e-6),
                             drop_rate=0.,
                             attn_drop_rate=0.,
                             drop_path_rate=0.1,
-                            num_frames=model_params["num_frames"],
-                            attention_type=model_params["attention_type"])
-        checkpoint = torch.load('weights/tsformer-vo.tar', map_location=torch.device("cuda"))
-        self.vit.load_state_dict(checkpoint['model'])
+                            num_frames=2,
+                            attention_type='divided_space_time')
+        if(config.vit.pretrained):
+            checkpoint = torch.load(config.vit.pretrained_weights, map_location=torch.device("cuda"))
+            self.vit.load_state_dict(checkpoint['model'])
         self.vit.head = torch.nn.Identity() #remove last linear layer
         
     def forward(self, data):
@@ -200,9 +159,18 @@ class PhotoVoModel(nn.Module):
             scores0_valid = b_scores0_valid.unsqueeze(0) if scores0_valid is None else torch.cat([scores0_valid, b_scores0_valid.unsqueeze(0)], dim=0)
             scores1_valid = b_scores1_valid.unsqueeze(0) if scores1_valid is None else torch.cat([scores1_valid, b_scores1_valid.unsqueeze(0)], dim=0)
 
+
+        # make intrinsics layer
+        il = make_intrinsics_layer(data['view0']['image'].shape[2],
+                                   data['view0']['image'].shape[3],
+                                   data['K'])
+        # Add intrinsics layer to images
+        im0 = torch.cat([data['view0']['image'], il], dim=1)
+        im1 = torch.cat([data['view1']['image'], il], dim=1)
+        
         # Extract local patches from both views using valid keypoints
-        patches0 = get_patches(data['view0']['image'], kpts0_valid, self.config.photo_vo.model.patch_size)
-        patches1 = get_patches(data['view1']['image'], kpts1_valid, self.config.photo_vo.model.patch_size)
+        patches0 = get_patches(im0, kpts0_valid, self.config.photo_vo.model.patch_size)
+        patches1 = get_patches(im1, kpts1_valid, self.config.photo_vo.model.patch_size)
 
         # Store patch-related info in data
         data['view0']['patches'] = patches0
