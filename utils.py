@@ -205,6 +205,7 @@ def get_patches(img, pts, patch_size=16):
     """Given an image and a set of points, return the patches around the points"""
     device = img.device
     batch_size = img.size(0)
+    channels = img.size(1)
     patch_size = int(patch_size)
     half = patch_size // 2
     patches = []
@@ -216,7 +217,7 @@ def get_patches(img, pts, patch_size=16):
         for j in range(pts_i.size(0)):
             #invalid kpts = (-1, -1)
             if(pts_i[j][0] < 0 or pts_i[j][1] < 0 or pts_i[j][0] >= img.size(2) or pts_i[j][1] >= img.size(3)):
-                patches_i.append(torch.full((3, patch_size, patch_size), -1.0, device=device))
+                patches_i.append(torch.full((channels, patch_size, patch_size), -1.0, device=device))
                 continue
             x, y = pts_i[j].int()            
             patch = img_pad[..., y:y+patch_size, x:x+patch_size]
