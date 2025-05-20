@@ -54,6 +54,15 @@ class KITTI(torch.utils.data.Dataset):
                  max_skip=0,
                  transform=None,
                  resize=(640, 640)):
+        
+        
+        
+        # KITTI normalization (extracted from github.com/aofrancani/TSformer-VO)
+        self.mean_angles = np.array([1.7061e-5, 9.5582e-4, -5.5258e-5])
+        self.std_angles = np.array([2.8256e-3, 1.7771e-2, 3.2326e-3])
+        self.mean_t = np.array([-8.6736e-5, -1.6038e-2, 9.0033e-1])
+        self.std_t = np.array([2.5584e-2, 1.8545e-2, 3.0352e-1])
+        
         self.data_path = data_path
         self.gt_path = gt_path
         self.camera_id = camera_id
@@ -61,11 +70,6 @@ class KITTI(torch.utils.data.Dataset):
         self.transform = transform
         self.apply_rcr = apply_rcr
         self.resize = resize
-        # KITTI normalization
-        # self.mean_angles = np.array([1.7061e-5, 9.5582e-4, -5.5258e-5])
-        # self.std_angles = np.array([2.8256e-3, 1.7771e-2, 3.2326e-3])
-        # self.mean_t = np.array([-8.6736e-5, -1.6038e-2, 9.0033e-1])
-        # self.std_t = np.array([2.5584e-2, 1.8545e-2, 3.0352e-1])
 
         self.sequences = sequences
         
@@ -112,8 +116,8 @@ class KITTI(torch.utils.data.Dataset):
         
         # Normalize angles and translation
         angles = rotation_to_euler(R, seq='zyx')
-        #angles = (np.asarray(angles) - self.mean_angles) / self.std_angles
-        #t = (np.asarray(t) - self.mean_t) / self.std_t
+        angles = (np.asarray(angles) - self.mean_angles) / self.std_angles
+        t = (np.asarray(t) - self.mean_t) / self.std_t
         
         angles = np.nan_to_num(angles, 0.0)
         t = np.nan_to_num(t, 0.0)
@@ -215,13 +219,17 @@ class KITTI(torch.utils.data.Dataset):
         # load poses
         pose1 = pair['pose1']
         pose2 = pair['pose2']
-        # compute relative pose
-        rel_pose = self.compute_relative_pose(pose1, pose2)
+        
+        # randomly decide to reverse the pair
+        reverse = random.random() < 0.5
+        if reverse:
+            img1, img2 = img2, img1
+            rel_pose = self.compute_relative_pose(pose2, pose1)
+        else:
+            rel_pose = self.compute_relative_pose(pose1, pose2)
+
         img1 = img1.unsqueeze(0)
         img2 = img2.unsqueeze(0)
-        imgs = np.concatenate([img1, img2], axis=0)
-        imgs = np.asarray(imgs)
-        return torch.FloatTensor(imgs), rel_pose, torch.FloatTensor(K)
+        imgs = torch.cat([img1, img2], dim=0)
 
-    
-        
+        return imgs, rel_pose, torch.FloatTensor(K)
