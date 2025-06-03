@@ -113,8 +113,8 @@ if __name__ == "__main__":
         },
         queenscamp = {
             'data_path': '/home/hudson/Desktop/Unicamp/datasets/queenscamp',
-            'train_sequences': ["15"],
-            'val_sequences': ["15"],
+            'train_sequences': ["16"],
+            'val_sequences': ["16"],
             'size': (640, 640),
             'max_skip': 5
         },

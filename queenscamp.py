@@ -231,11 +231,14 @@ class QueensCAMP(Dataset):
         pose1 = pair['pose1']
         pose2 = pair['pose2']
 
-        # randomly decide to reverse the pair
-        reverse = random.random() < 0.5
-        if reverse:
-            img1, img2 = img2, img1
-            rel_pose = self.compute_relative_pose(pose2, pose1)
+        if self.transform:
+            # randomly decide to reverse the pair
+            reverse = random.random() < 0.5
+            if reverse:
+                img1, img2 = img2, img1
+                rel_pose = self.compute_relative_pose(pose2, pose1)
+            else:
+                rel_pose = self.compute_relative_pose(pose1, pose2)
         else:
             rel_pose = self.compute_relative_pose(pose1, pose2)
 

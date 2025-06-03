@@ -1,9 +1,7 @@
 import torch
 from torch import nn
 import gluefactory as gf
-from gluefactory.geometry.wrappers import Pose
 from timesformer.models.vit import VisionTransformer
-from model_tsformer import build_model as tsformer
 from functools import partial
 
 from utils import get_patches, make_intrinsics_layer, get_sorted_matches, matrix_to_euler_angles
@@ -167,7 +165,7 @@ class PhotoVoModel(nn.Module):
         # Add intrinsics layer to images
         im0 = torch.cat([data['view0']['image'], il], dim=1)
         im1 = torch.cat([data['view1']['image'], il], dim=1)
-        
+
         # Extract local patches from both views using valid keypoints
         patches0 = get_patches(im0, kpts0_valid, self.config.photo_vo.model.patch_size)
         patches1 = get_patches(im1, kpts1_valid, self.config.photo_vo.model.patch_size)
