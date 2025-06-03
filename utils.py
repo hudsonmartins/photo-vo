@@ -21,7 +21,6 @@ def normalize_image(image):
     normalize = transforms.Normalize(mean, std)
     return normalize(image)
 
-
 def get_sorted_matches(data):
     """
     Find matches ordered by score
@@ -39,8 +38,7 @@ def get_sorted_matches(data):
         sorted_indices = torch.argsort(mcfs[:, 2], descending=True)
         sorted_mcfs = mcfs[sorted_indices]
         b_mcfs[i] = sorted_mcfs
-    return b_mcfs
-        
+    return b_mcfs  
 
 def debug_batch(data, figs_dpi=100, i=0):
     '''
@@ -63,11 +61,9 @@ def debug_batch(data, figs_dpi=100, i=0):
     depth1 = view1.get("depth")
     camera0, camera1 = view0["camera"], view1["camera"]
 
-    #m0 = data["matches0"]
     kpts0_gt, kpts0_1_gt = get_kpts_projection(view0['patches_coords'], depth0, depth1, camera0, camera1, data["T_0to1"])
     kpts1_gt, kpts1_0_gt = get_kpts_projection(view1['patches_coords'], depth1, depth0, camera1, camera0, data["T_1to0"])
     
-    #valid = (m0[i] > -1)
     kpm0, kpm1 = kp0[i].numpy(), kp1[i].numpy()
     images.append(
         [view0["image"][i].permute(1, 2, 0), view1["image"][i].permute(1, 2, 0)]
@@ -75,66 +71,23 @@ def debug_batch(data, figs_dpi=100, i=0):
     kpts.append([kp0[i], kp1[i]])
     matches.append((kpm0, kpm1))
 
-    if "heatmap0" in data.keys():
-        heatmaps.append(
-            [
-                torch.sigmoid(data["heatmap0"][i, 0]),
-                torch.sigmoid(data["heatmap1"][i, 0]),
-            ]
-        )
-    elif "depth" in view0.keys() and view0["depth"] is not None:
-        heatmaps.append([view0["depth"][i], view1["depth"][i]])
-
-    img_patches0 = draw_patches(view0["image"][i].permute(1, 2, 0)*255, kpts0_gt[i], color=(0,255,0), patch_size=16)
-    img_patches1 = draw_patches(view1["image"][i].permute(1, 2, 0)*255, kpts1_gt[i], color=(0,255,0), patch_size=16)
-    
-    img_patches0 = draw_patches(img_patches0, data['photo_loss']['kpts1_0'][i].detach().numpy(), color=(255,0,0), patch_size=16)
-    img_patches1 = draw_patches(img_patches1, data['photo_loss']['kpts0_1'][i].detach().numpy(), color=(255,0,0), patch_size=16)
-
-    img_patches0 = draw_patches(img_patches0, kpts1_0_gt[i].detach().numpy(), color=(0,0,255))
-    img_patches1 = draw_patches(img_patches1, kpts0_1_gt[i].detach().numpy(), color=(0,0,255), patch_size=16)
-    try:
-        img_patches0 = cv2.putText(img_patches0, 'Green: Exctracted', (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1, cv2.LINE_AA)
-        img_patches0 = cv2.putText(img_patches0, 'Red: Predicted Projection', (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0), 1, cv2.LINE_AA)
-        img_patches0 = cv2.putText(img_patches0, 'Blue: Ground Truth Projection', (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1, cv2.LINE_AA)
-    except:
-        pass
-    images_projs.append([img_patches0, img_patches1])
-        
-
-    fig_matches, axes = plot_image_grid(images, return_fig=True, set_lim=True, dpi=figs_dpi)
-    if len(heatmaps) > 0:
-       plot_heatmaps(heatmaps[i], axes=axes[i], a=1.0)
-    plot_keypoints(kpts[i], axes=axes[i], colors="royalblue")
-    plot_matches(*matches[i], color=[0,1,0], axes=axes[i], a=0.5, lw=1.0, ps=0.0)
-
-    fig_projs, axes = plot_image_grid(images_projs, return_fig=True, set_lim=True, dpi=figs_dpi)   
-
-    patches0 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches0'][i] if not torch.any(p < 0)]
-    patches1_0 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches1_0'][i] if not torch.any(p < 0)]
-    patches1 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches1'][i] if not torch.any(p < 0)]
-    patches0_1 = [p.permute(1, 2, 0) for p in data['photo_loss']['patches0_1'][i] if not torch.any(p < 0)]
-    
-    if(len(patches0) > 10 and len(patches1_0) > 10 and len(patches1) > 10 and len(patches0_1) > 10):
-        fig_patches, axes = plot_image_grid([patches0[:10], patches1_0[:10], patches1[:10], patches0_1[:10]], return_fig=True, set_lim=True)
-    else:
-        fig_patches = None    
     origin = torch.tensor([0, 0, 0, 0, 0, 0])
-    fig_cameras = draw_camera_poses([origin, data['gt_vo'][i], data['pred_vo'][i].detach()], 
+    fig_cameras = draw_camera_poses([origin[3:], data['gt_vo'][i][3:], data['pred_vo'][i][3:].detach()],
+                                    [origin[:3], data['gt_vo'][i][:3], data['pred_vo'][i][:3].detach()],
                                     ['cam0', 'gt_cam1', 'pred_cam1'],
                                     dpi=figs_dpi)
-    return {"matches": fig_matches, "projs": fig_projs, "patches": fig_patches, "cameras": fig_cameras}
 
+    return {"cameras": fig_cameras}
 
-def draw_camera_poses(poses, labels, dpi=100):
+def draw_camera_poses(trans, rot, labels, dpi=100):
     n_plots = 2
     fig, axs = plt.subplots(n_plots, 1, figsize=(6, 6), dpi=dpi)
     
-    for (pose, label) in zip(poses, labels):
+    for (t, r, label) in zip(trans, rot, labels):
         # Extracting translation and rotation components
-        xy = pose[:2]
-        xz = [pose[0], pose[2]]
-        rotation = R.from_euler('xyz', pose[3:]).as_matrix() 
+        xy = t[:2]
+        xz = t[[0, 2]]
+        rotation = R.from_euler('ZYX', r).as_matrix()
 
         # Plot 1 shows XY plane
         axs[0].quiver(*xy, rotation[0, 0], rotation[1, 0], headaxislength=0, headwidth=0, headlength=0, color='r', label='X axis')
@@ -205,7 +158,6 @@ def draw_matches(image0, image1, kpts0, kpts1, scores=None):
     out[:H1, W0:, :] = image1
 
     kpts0, kpts1 = np.round(kpts0).astype(int), np.round(kpts1).astype(int)
-
     # get color
     if scores is not None:
         smin, smax = scores.min(), scores.max()
@@ -221,10 +173,39 @@ def draw_matches(image0, image1, kpts0, kpts1, scores=None):
         cv2.line(out, (x0, y0), (x1 + W0, y1), color=c, thickness=1, lineType=cv2.LINE_AA)
     return out
 
+def make_intrinsics_layer(height, width, Ks):
+    """
+    Create a batch of intrinsic parameter layers for different cameras
+    """
+    
+    # Create base grid with 0.5 offset for pixel center
+    x_coords = torch.arange(width, dtype=torch.float32, device=Ks.device) + 0.5
+    y_coords = torch.arange(height, dtype=torch.float32, device=Ks.device) + 0.5
+    xx, yy = torch.meshgrid(x_coords, y_coords, indexing='xy')  # (H, W)
+    
+    # Expand to batch dimensions (B, H, W)
+    batch_size = Ks.size(0)
+    xx = xx.unsqueeze(0).expand(batch_size, -1, -1)  # (B, H, W)
+    yy = yy.unsqueeze(0).expand(batch_size, -1, -1)  # (B, H, W)
+    
+    # Expand intrinsics to match dimensions
+    fx = Ks[:, 0].unsqueeze(1).unsqueeze(2)  # (B, 1, 1)
+    fy = Ks[:, 1].unsqueeze(1).unsqueeze(2)  # (B, 1, 1)
+    ox = Ks[:, 2].unsqueeze(1).unsqueeze(2)  # (B, 1, 1)
+    oy = Ks[:, 3].unsqueeze(1).unsqueeze(2)  # (B, 1, 1)
+        
+    # Calculate normalized coordinates
+    kcx = (xx - ox) / fx
+    kcy = (yy - oy) / fy
+    
+    # Stack into final tensor (B, 2, H, W)
+    return torch.stack([kcx, kcy], dim=1)
+
 def get_patches(img, pts, patch_size=16):
     """Given an image and a set of points, return the patches around the points"""
     device = img.device
     batch_size = img.size(0)
+    channels = img.size(1)
     patch_size = int(patch_size)
     half = patch_size // 2
     patches = []
@@ -234,9 +215,9 @@ def get_patches(img, pts, patch_size=16):
         pts_i = pts[i]
         patches_i = []
         for j in range(pts_i.size(0)):
-            if torch.isnan(pts_i[j]).any():
-                #append nan tensor
-                patches_i.append(torch.full((3, patch_size, patch_size), float('nan')).to(device))
+            #invalid kpts = (-1, -1)
+            if(pts_i[j][0] < 0 or pts_i[j][1] < 0 or pts_i[j][0] >= img.size(2) or pts_i[j][1] >= img.size(3)):
+                patches_i.append(torch.full((channels, patch_size, patch_size), -1.0, device=device))
                 continue
             x, y = pts_i[j].int()            
             patch = img_pad[..., y:y+patch_size, x:x+patch_size]
@@ -389,3 +370,30 @@ def matrix_to_euler_angles(matrix: torch.Tensor, convention: str) -> torch.Tenso
         ),
     )
     return torch.stack(o, -1)
+
+def matrix_to_euler(matrix):
+    r = R.from_matrix(matrix)
+    return r.as_euler('zyx', degrees=False)
+
+def euler_to_matrix(euler):
+    r = R.from_euler('zyx', euler, degrees=False)
+    return r.as_matrix()
+
+def kitti_to_6dof(pose):
+    pos = np.array([pose[3], pose[7], pose[11]])
+    matrix = np.array([[pose[0], pose[1], pose[2]],
+                  [pose[4], pose[5], pose[6]],
+                  [pose[8], pose[9], pose[10]]])
+    angles = matrix_to_euler(matrix)
+    return np.concatenate((pos, angles))
+
+def prediction_to_kitti(pose):
+    pos = np.reshape(pose[:3], (3,1))
+    euler = pose[3:]
+    angles = euler_to_matrix(euler)
+    return np.concatenate((angles, pos), axis=1)
+
+def translation_to_skew_symmetric(t):
+    return np.array([[0, -t[2], t[1]],
+                    [t[2], 0, -t[0]],
+                    [-t[1], t[0], 0]])

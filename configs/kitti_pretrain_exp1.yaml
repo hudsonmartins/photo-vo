@@ -1,0 +1,49 @@
+data:
+  name: kitti
+  seed: 42
+  path: /home/hudson/data/kitti
+  size: 1024
+  cycle_every: -1
+  batch_size: 8
+  train_sequences: 
+    - "00"
+    - "02"
+    - "08"
+    - "09"
+  val_sequences:
+    - "03"
+  val_size: 256
+  max_skip: 5
+features_model:
+    name: two_view_pipeline
+    freeze: True
+    extractor:
+        name: extractors.superpoint_open
+        max_num_keypoints: 2048
+        force_num_keypoints: True
+        detection_threshold: -1
+        nms_radius: 3
+        trainable: False
+    matcher:
+        name: matchers.lightglue
+        features: superpoint
+        weights: weights/superpoint_lightglue.pth
+    ground_truth:
+        name: matchers.depth_matcher
+        th_positive: 3
+        th_negative: 5
+        th_epi: 5
+    allow_no_extract: True
+photo_vo:
+    name: photo_vo
+    model:
+      patch_size: 16
+      dim_emb: 64
+      num_matches: 50
+      loss_weights:
+        pose: 1.0
+train:
+    save_every_iter: -1
+    log_every_iter: 100
+    eval_every_iter: 100
+    lr: 1e-4
