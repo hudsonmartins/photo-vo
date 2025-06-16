@@ -5,17 +5,19 @@ import argparse
 import numpy as np
 import random
 import logging
-import matplotlib.pyplot as plt
-from omegaconf import OmegaConf
 from tqdm import tqdm
-from gluefactory.datasets import get_dataset
-from gluefactory.utils.tensor import batch_to_device
 from torch.utils.tensorboard import SummaryWriter
+from omegaconf import OmegaConf
+from gluefactory.geometry.wrappers import Pose
 
-from utils import debug_batch
+from loss import pose_loss_norm
+from iterators import get_iterator
 from model import get_photo_vo_model
+from utils import batch_to_device, draw_camera_poses, draw_matches
 
-logger = logging.getLogger("photo-vo.train")
+
+# Setup logging
+logger = logging.getLogger("kitti_train")
 logger.setLevel(logging.INFO)
 handler = logging.StreamHandler()
 formatter = logging.Formatter(fmt="[%(asctime)s %(name)s %(levelname)s] %(message)s", datefmt="%m/%d/%Y %H:%M:%S")
@@ -23,201 +25,209 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 logger.propagate = False
 
+# Default training configuration
 default_train_conf = {
-    "epochs": 1,  # number of epochs
-    "optimizer": "adam",  # name of optimizer in [adam, sgd, rmsprop]
-    "optimizer_options": {},  # optional arguments passed to the optimizer
-    "lr": 0.001,  # learning rate
-    "eval_every_iter": 1000,  # interval for evaluation on the validation set
-    "save_every_iter": 5000,  # interval for saving the current checkpoint
-    "log_every_iter": 200,  # interval for logging the loss to the console
-    "load_experiment": None,  # initialize the model from a previous experiment
-    "tensorboard_dir": "runs",  # directory for tensorboard logs
-    "best_loss": float("inf"),  # best loss for the model
+    "epochs": 10,
+    "optimizer": "adam",
+    "optimizer_options": {},
+    "lr": 0.001,
+    "eval_every_iter": 1000,
+    "save_every_iter": 5000,
+    "log_every_iter": 200,
+    "load_experiment": None,
+    "tensorboard_dir": "runs",
+    "best_loss": float("inf"),
 }
 default_train_conf = OmegaConf.create(default_train_conf)
 
 
-def do_evaluation(val_loader, model, device, n_images=5):
-    avg_losses = None
-    all_figs = {}
-    for it, data in enumerate(tqdm(val_loader)):
-        data = batch_to_device(data, device, non_blocking=True)
-        with torch.no_grad():
-            output = model(data)
-            loss, output = model.loss(output)
-            if torch.isnan(loss['total']).any():
-                logger.info(f"Detected NAN, skipping iteration {it}")
-                continue
-            avg_losses = {k: v + loss[k].mean() for k, v in loss.items()}
-            if(it < n_images):
-                figs = {k+'_'+str(it): v for k, v in debug_batch(output, figs_dpi=700).items()}
-                all_figs = {**all_figs, **figs}
-
-    if(avg_losses is None):
-        return None, None
-    avg_losses = {k: v.mean() for k, v in avg_losses.items()}
-    return avg_losses, all_figs
+def compute_loss(pred, gt, criterion):
+    loss = criterion(pred, gt.float())
+    return loss
 
 
-def train(model, train_loader, val_loader, optimizer, device, config, epoch=0, start_iter=0, debug=False):
-    writer = SummaryWriter(log_dir=config.train.tensorboard_dir)
-    while(epoch < config.train.epochs):
-        for it, data in enumerate(tqdm(train_loader)):
-            if(it < start_iter):
-                continue
-            tot_n_samples = (len(train_loader) * epoch + it)
-            model.train()
-            if(config.features_model.freeze):
-                model.matcher.eval()
-            optimizer.zero_grad()
+def val_epoch(model, val_loader, criterion, device):
+    epoch_loss = 0
+    with tqdm(val_loader, unit="batch") as tepoch:
+        for images, gt, Ks in tepoch:
+            tepoch.set_description(f"Validating ")
+            #images = images.transpose(1, 2).to(device)
+            data = {'view0': {'image': images[:, 0], 'depth': None, 'camera': None},
+                    'view1': {'image': images[:, 1], 'depth': None, 'camera': None},
+                    'K': Ks,
+                    'T_0to1': Pose.from_Rt(torch.eye(3).repeat(images.shape[0], 1, 1), gt[:, :3])}
             data = batch_to_device(data, device, non_blocking=True)
             output = model(data)
-            loss, output = model.loss(output)
-            if torch.isnan(loss['total']).any():
-                logger.info(f"Detected NAN, skipping iteration {it}")
-                continue
-            loss['total'].mean().backward()
-            optimizer.step()
+            estimated_pose = output['pred_vo']    
+            gt = gt.to(device)
+            loss = compute_loss(estimated_pose, gt, criterion)
+            epoch_loss += loss.item()
+            tepoch.set_postfix(val_loss=loss.item())
+            sample = {'estimated': estimated_pose[0].detach().cpu(),
+                     'gt': gt[0].detach().cpu(),
+                     'view0': output['view0'],
+                     'view1': output['view1']}            
+    return epoch_loss / len(val_loader), sample
 
-            if(debug):
-                figs = debug_batch(output, figs_dpi=100)
-                #plot figs
-                for k, v in figs.items():
-                    if(v):
-                        v.savefig(f"debug_{k}_{tot_n_samples}.png")
-                        
 
-            if(it % config.train.log_every_iter == 0):
-                logger.info(f"[Train] Epoch {epoch} Iteration {it} Loss: {loss['total'].mean()}")
-                for k, v in loss.items():
-                    writer.add_scalar("train/loss/" + k, v.mean(), tot_n_samples)
-                figs = debug_batch(output, figs_dpi=700)
-                for k, v in figs.items():
-                    if(v):
-                        writer.add_figure("train/fig/" + k, v, tot_n_samples)
-                writer.add_scalar("train/epoch", epoch, tot_n_samples)
+def train_epoch(model, train_loader, criterion, optimizer, epoch, tensorboard_writer, device):
+    epoch_loss = 0
+    iter = (epoch - 1) * len(train_loader) + 1
 
-            #validation
-            if(config.train.eval_every_iter > 0 and it % config.train.eval_every_iter == 0 or it == (len(train_loader) - 1)):                
-                model.eval()
-                logger.info(f"Starting validation at epoch {epoch} iteration {it}")
-                loss, figs = do_evaluation(val_loader, model, device)
-                if(loss):
-                    logger.info(f"[Val] Epoch: {epoch} Iteration: {it} Loss: {loss['total'].mean()}")
-                    for k, v in loss.items():
-                        writer.add_scalar("val/loss/" + k, v.mean(), tot_n_samples)
-                    for k, v in figs.items():
-                        if(v):
-                            writer.add_figure("val/fig/" + k, v, tot_n_samples)
-                    writer.add_scalar("val/epoch", epoch, tot_n_samples)
+    with tqdm(train_loader, unit="batch") as tepoch:
+        for images, gt, Ks in tepoch:
+            tepoch.set_description(f"Epoch {epoch}")
+            #images = images.transpose(1, 2).to(device)
+            
+            data = {'view0': {'image': images[:, 0], 'depth': None, 'camera': None},
+                    'view1': {'image': images[:, 1], 'depth': None, 'camera': None},
+                    'K': Ks,
+                    'T_0to1': Pose.from_Rt(torch.eye(3).repeat(images.shape[0], 1, 1), gt[:, :3])}
+            data = batch_to_device(data, device, non_blocking=True)
+            output = model(data)
+            estimated_pose = output['pred_vo']
+            gt = gt.to(device)
+            loss = compute_loss(estimated_pose, gt, criterion)
+            if torch.isnan(loss):
+                logger.error("Encountered NaN loss!")
 
-                    if(loss['total'].mean().item() < config.train.best_loss):
-                        best_loss = loss['total'].mean().item()
-                        config.train.best_loss = best_loss
-                        logger.info(f"Found best model with loss {best_loss}. Saving checkpoint.")
-                        torch.save({
-                            "model": model.state_dict(),
-                            "optimizer": optimizer.state_dict(),
-                            "conf": OmegaConf.to_container(config, resolve=True),
-                            "epoch": epoch,
-                        }, os.path.join(args.experiment, "best_model.tar"))
-
-            if(config.train.save_every_iter > 0 and it % config.train.save_every_iter == 0 or it == (len(train_loader) - 1)):
-                logger.info(f"Saving checkpoint at epoch {epoch} iteration {it}")
+                logger.error(f"Images shape: {images.shape}")
+                logger.error(f"GT : {gt}")
+                logger.error(f"Estimated pose: {estimated_pose}")
+                logger.error(f"Data keys: {list(data.keys())}")
+                logger.error(f"Model output keys: {list(output.keys())}")
                 
-                torch.save({
-                    "model": model.state_dict(),
-                    "optimizer": optimizer.state_dict(),
-                    "conf": OmegaConf.to_container(config, resolve=True),
-                    "epoch": epoch,
-                }, os.path.join(args.experiment, f"checkpoint_{epoch}_{it}.tar"))
-        epoch += 1
+                if torch.isnan(images).any():
+                    logger.error("Images contain NaN values!")
+                else:
+                    logger.info("Images do NOT contain NaN values.")
+                raise ValueError("NaN detected during training!")
+            
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            epoch_loss += loss.item()
+            tepoch.set_postfix(loss=loss.item())
+            tensorboard_writer.add_scalar("train/loss", loss.item(), iter)
+            iter += 1
+            
+        origin = torch.tensor([0, 0, 0, 0, 0, 0])
+        fig_cameras = draw_camera_poses([origin[3:], estimated_pose[0,3:].detach().cpu(), gt[0,3:].detach().cpu()],
+                                        [origin[:3], estimated_pose[0,:3].detach().cpu(), gt[0,:3].detach().cpu()],
+                                        ["origin", "estimated", "gt"], dpi=700)
+        tensorboard_writer.add_figure("train/poses", fig_cameras, iter)
+    return epoch_loss / len(train_loader)  
+
+
+def train_tsformer(model, train_loader, val_loader, optimizer, device, config):
+    criterion = pose_loss_norm
+    writer = SummaryWriter(log_dir=config.train.tensorboard_dir)
+    for epoch in range(config.train.epochs):
+        model.train()
+        if(config.vit.freeze):
+            model.imgenc.eval()
+        if(config.features_model.freeze):
+            model.matcher.eval()
+        train_loss = train_epoch(model, train_loader, criterion, optimizer, epoch, writer, device)
+        logger.info(f"Epoch {epoch}, Train loss: {train_loss}")
+        writer.add_scalar("train/loss_total", train_loss, epoch)
+        
+        with torch.no_grad():
+            model.eval()
+            val_loss, sample = val_epoch(model, val_loader, criterion, device)
+            logger.info(f"Epoch {epoch}, Validation loss: {val_loss}")
+        
+        logger.info(f"Epoch {epoch}, Validation loss: {val_loss}")
+        writer.add_scalar("val/loss", val_loss, epoch)
+        
+        if val_loss < config.train.best_loss:
+            config.train.best_loss = val_loss
+            logger.info(f"New best model with loss {val_loss}. Saving checkpoint.")
+            torch.save({
+                "model": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "config": OmegaConf.to_container(config, resolve=True),
+            }, os.path.join(args.experiment, "best_model.tar"))
+            origin = torch.tensor([0, 0, 0, 0, 0, 0])
+            fig_cameras = draw_camera_poses([origin[3:], sample['estimated'][3:], sample['gt'][3:]],
+                                            [origin[:3], sample['estimated'][:3], sample['gt'][:3]],
+                                            ["origin", "estimated", "gt"], dpi=700)
+            img0 = sample['view0']['image'][0].detach().cpu()
+            img1 = sample['view1']['image'][0].detach().cpu()
+            #convert img to h,w,c
+            img0 = img0.permute(1, 2, 0).numpy()*255
+            img1 = img1.permute(1, 2, 0).numpy()*255
+            img0 = img0.astype(np.uint8)
+            img1 = img1.astype(np.uint8)
+            fig_matches = draw_matches(img0, img1,
+                                       sample['view0']['patches_coords'][0].detach().cpu().numpy(),
+                                       sample['view1']['patches_coords'][0].detach().cpu().numpy(), 
+                                       sample['view0']['scores'][0].detach().cpu().numpy())
+            writer.add_figure("val/poses", fig_cameras, epoch)
+            writer.add_image("val/matches", fig_matches.transpose(2, 0, 1)/255.0, epoch)
+               
+
 
 def main(args):
     conf = OmegaConf.load(args.conf)
     conf.train = OmegaConf.merge(default_train_conf, conf.train)
-    assert conf.features_model.name == 'two_view_pipeline'
     device = "cuda" if torch.cuda.is_available() and args.use_cuda else "cpu"
     logger.info(f"Using device {device}")
+
     init_cp = None
     if conf.train.load_experiment:
-        if(not args.load_best_model):
-            logger.info(f"Trying to restore from previous training of {conf.train.load_experiment}")
-            ckpts = glob.glob(os.path.join(conf.train.load_experiment, "checkpoint_*.tar"))
-            ckpts = [os.path.basename(ckpt) for ckpt in ckpts]
-            if len(ckpts) > 0:
-                init_cp_name = sorted(ckpts)[-1]
-                init_cp = torch.load(os.path.join(conf.train.load_experiment, init_cp_name), map_location="cpu")
-                logger.info(f"Will load model {init_cp_name}")
-            else:
-                logger.info(f"No checkpoint found in {conf.train.load_experiment}")
+        ckpts = sorted(glob.glob(os.path.join(conf.train.load_experiment, "checkpoint_*.tar")))
+        if ckpts:
+            init_cp = torch.load(ckpts[-1], map_location="cpu")
+            logger.info(f"Loaded checkpoint {ckpts[-1]}")
         else:
             init_cp = torch.load(os.path.join(conf.train.load_experiment, "best_model.tar"), map_location="cpu")
-            logger.info(f"Loading model best_model.tar")
-            
-        if(init_cp is not None):
-            conf = OmegaConf.merge(OmegaConf.create(init_cp["conf"]), conf)
-            # load the model config of the old setup, and overwrite with current config
-            conf.photo_vo = OmegaConf.merge(
-                OmegaConf.create(init_cp["conf"]).photo_vo, conf.photo_vo
-            )
-            conf.features_model = OmegaConf.merge(
-                OmegaConf.create(init_cp["conf"]).features_model, conf.features_model
-            )
-
-    optimizer_fn = {
-        "sgd": torch.optim.SGD,
-        "adam": torch.optim.Adam,
-        "adamw": torch.optim.AdamW,
-        "rmsprop": torch.optim.RMSprop,
-    }[conf.train.optimizer]
-
+            logger.info(f"Loaded checkpoint {conf.train.load_experiment}/best_model.tar")
+   
     random.seed(conf.data.seed)
-    torch.manual_seed(conf.data.seed)
     np.random.seed(conf.data.seed)
+    torch.manual_seed(conf.data.seed)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed(conf.data.seed)
         torch.cuda.manual_seed_all(conf.data.seed)
 
-    dataset = get_dataset(conf.data.name)(conf.data)
-    train_loader = dataset.get_data_loader("train")
-    val_loader = dataset.get_data_loader("val")
-    logger.info(f"Training with {len(train_loader)} batches and validating with {len(val_loader)} batches")
+    train_loader = get_iterator(**conf.data, train=True)
+    val_loader = get_iterator(**conf.data, train=False)
 
     os.makedirs(args.experiment, exist_ok=True)
-    photo_vo_model = get_photo_vo_model(conf)
-    optimizer = optimizer_fn(
-        photo_vo_model.parameters(), lr=conf.train.lr, **conf.train.optimizer_options
-    )
-    photo_vo_model.to(device)
-    epoch = 0
-    if init_cp is not None:
-        photo_vo_model.load_state_dict(init_cp["model"], strict=False)
-        epoch = init_cp["epoch"]
+           
+    model = get_photo_vo_model(conf)
+    optimizer = torch.optim.Adam(model.parameters(), lr=conf.train.lr)
+    model.to(device)
+
+    if init_cp:
+        model.load_state_dict(init_cp["model"], strict=False)
         optimizer.load_state_dict(init_cp["optimizer"])
-        if(conf.train.lr != optimizer.param_groups[0]['lr']):
-            logger.info(f"Overwriting learning rate from checkpoint {optimizer.param_groups[0]['lr']} to {conf.train.lr}")
+        if conf.train.lr != optimizer.param_groups[0]['lr']:
+            logger.info(f"Overriding learning rate from {optimizer.param_groups[0]['lr']} to {conf.train.lr}")
             for param_group in optimizer.param_groups:
                 param_group['lr'] = conf.train.lr
-        logger.info(f"Restored model from epoch {epoch}")
-    del init_cp
+    
+    if(conf.vit.freeze):
+        logger.info("Freezing the ViT model")
+        for param in model.imgenc.parameters():
+            param.requires_grad = False
+        logger.info(f"Unfreezing the last {conf.vit.unfreeze_last} layers of the ViT model")
+        
+        for param in model.imgenc.vit.blocks[-conf.vit.unfreeze_last:].parameters():
+            param.requires_grad = True
 
-    logger.info('Training with the following configuration: ')
-    logger.info(conf)
     if(conf.features_model.freeze):
         logger.info("Freezing the features model")
-        for param in photo_vo_model.matcher.parameters():
-            param.requires_grad = False        
-    train(photo_vo_model, train_loader, val_loader, optimizer, device, conf, epoch, args.start_iter, args.debug)
+        for param in model.matcher.parameters():
+            param.requires_grad = False 
 
+    logger.info(f"Training with dataset config {conf.data}")
+    train_tsformer(model, train_loader, val_loader, optimizer, device, conf)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("experiment", type=str)
-    parser.add_argument("--conf", type=str)
-    parser.add_argument("--debug", action="store_true")
-    parser.add_argument("--load_best_model", action="store_true")
+    parser.add_argument("--conf", type=str, required=True)
     parser.add_argument("--use_cuda", action="store_true")
     parser.add_argument("--start_iter", type=int, default=0)
 

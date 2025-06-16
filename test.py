@@ -5,12 +5,17 @@ import torch
 import importlib
 import argparse
 import numpy as np
+
 from omegaconf import OmegaConf
 from model import get_photo_vo_model
 from utils import euler_angles_to_matrix
-from gluefactory.utils.image import numpy_image_to_torch, ImagePreprocessor
+from torchvision import transforms
 
 from modvo.vo.tracker import Tracker
+
+#kitti pose mean and std
+KITT_MEAN = [1.7061e-5, 9.5582e-4, -5.5258e-5, -8.6736e-5, -1.6038e-2, 9.0033e-1]
+KITTI_STD = [2.8256e-3, 1.7771e-2, 3.2326e-3, 2.5584e-2, 1.8545e-2, 3.0352e-1]
 
 class PhotoVOTracker(Tracker):
     def __init__(self, **params):
@@ -18,32 +23,24 @@ class PhotoVOTracker(Tracker):
         self.first_image = True
         self.index = 0
         self.img0, self.img1 = None, None
-        self.photo_vo_model = self.load_model(params['path'])
-        
-
-    def load_model(self, model_path):
-        cp = torch.load(model_path)
-        model = get_photo_vo_model(OmegaConf.create(cp["conf"]))
-        model.load_state_dict(cp["model"], strict=False)
-        model.eval()
-        model.to(self.device)
-        self.preprocessor = ImagePreprocessor(OmegaConf.create(cp["conf"]["data"]["preprocessing"]))
-        return model
+        self.camera = params['camera']
+        self.photo_vo_model = params['model']
+        self.photo_vo_model.to(self.device)
+        self.photo_vo_model.eval()
     
-    def get_input(self):
-        im0_torch = numpy_image_to_torch(self.img0)
-        im1_torch = numpy_image_to_torch(self.img1)
-        im0 = self.preprocessor(im0_torch)['image']
-        im1 = self.preprocessor(im1_torch)['image']
-        return {
-                'view0': {
-                    'image': torch.unsqueeze(im0, 0).to(self.device),
-                },
-                'view1': {
-                    'image': torch.unsqueeze(im1, 0).to(self.device),
-                }
-            }
 
+    def get_input(self):
+        preprocess = transforms.Compose([
+            transforms.Resize((640, 640)),
+            transforms.ToTensor(),
+        ])
+        imgs = [preprocess(img).unsqueeze(0) for img in [self.img0, self.img1]]
+        data = {'view0': {'image': imgs[0].to(self.device)}, 
+                'view1': {'image': imgs[1].to(self.device)},
+                'K': torch.tensor([self.camera.fx, self.camera.fy, 
+                                   self.camera.cx, self.camera.cy]).to(self.device).unsqueeze(0)}
+        return data
+        
     
     def track(self, image):
         with torch.no_grad():
@@ -54,10 +51,13 @@ class PhotoVOTracker(Tracker):
             else:
                 self.img1 = image
                 data = self.get_input()
-                vo = self.photo_vo_model(data)['pred_vo'][0]
-                t = vo[:3].reshape(3, 1).detach().cpu().numpy()
-                R = euler_angles_to_matrix(vo[3:], "XYZ").reshape(3, 3).detach().cpu().numpy()
-                
+                #vo = self.photo_vo_model(data.unsqueeze(0))
+                output = self.photo_vo_model(data)
+                vo = output['pred_vo']
+                vo = vo.squeeze(0)
+                vo = vo * torch.tensor(KITTI_STD).to(self.device) + torch.tensor(KITT_MEAN).to(self.device)
+                t = vo[3:].reshape(3, 1).detach().cpu().numpy()
+                R = euler_angles_to_matrix(vo[:3], "ZYX").reshape(3, 3).detach().cpu().numpy()
                 self.t = self.t + self.R.dot(t)
                 self.R = R.dot(self.R)
                 self.img0 = self.img1
@@ -66,8 +66,26 @@ class PhotoVOTracker(Tracker):
 
         return self.R, self.t
 
-def main(args):
-    with open(args.pipeline_config, 'r') as f:
+
+def main():
+
+    os.makedirs(args.output_path, exist_ok=True)
+    log_fopen = open(os.path.join(args.output_path, args.trajectory_file), mode='a')
+
+    model = get_photo_vo_model(OmegaConf.load(args.model_config))
+    checkpoint = torch.load(args.model_path, map_location='cuda')
+    model.load_state_dict(checkpoint['model'], strict=False)
+
+    if args.enable_gui:
+        import numpy as np
+        from modvo.maps.kf_based import Frame
+        from modvo.gui.viewer import GUIDrawer
+        drawer = GUIDrawer()
+        frames = []
+    
+    from modvo.utils.geometry import matrix_to_quaternion
+    
+    with open(args.dataset_config, 'r') as f:
         config = yaml.safe_load(f)
 
     #loading classes
@@ -78,24 +96,8 @@ def main(args):
     #get params without class name
     params = {k: v for k, v in config['dataloader'].items() if k != 'class'}
     dataloader = attr(**params)
-    
-    params = {k: v for k, v in config['model'].items() if k != 'class'}
-    vo = PhotoVOTracker(**params)
 
-    os.makedirs(args.output_path, exist_ok=True)
-    log_fopen = open(os.path.join(args.output_path, args.trajectory_file), mode='a')
-    print('Enable GUI: ', args.enable_gui)
-
-    if args.enable_gui:
-        import numpy as np
-        from modvo.maps.kf_based import Frame
-        from modvo.gui.viewer import GUIDrawer
-        drawer = GUIDrawer()
-        frames = []
-    
-    if args.output_format == 'tum':
-        from modvo.utils.geometry import matrix_to_quaternion
-   
+    vo = PhotoVOTracker(**{'model': model, 'camera': dataloader.get_camera()})    
     while dataloader.is_running:
         print("-"*50)
         try:
@@ -105,50 +107,44 @@ def main(args):
             break
         if(image is None):
             continue
-        print('img shape ', image.shape)
-        R, t = vo.track(image)
-        
+        print('img ', image.size)
+        R, t = vo.track(image.copy())
+                
         if args.enable_gui:
-            f = Frame(image)
+            f = Frame(np.array(image))
             frame_pose = np.eye(4)
             frame_pose[:3,:3] = R
             frame_pose[:3,3] = t.flatten()
             f.pose = frame_pose
             frames.append(f)
             drawer.draw_trajectory(frames)
+    
         if(dataloader.type == 'dataset'):
             i = dataloader.index
             print(i,'/', len(dataloader))
         else:
             print('frame ', dataloader.index)
         
-        if args.output_format == 'kitti':
-            print(R[0, 0], R[0, 1], R[0, 2], t[0, 0],
-                 R[1, 0], R[1, 1], R[1, 2], t[1, 0],
-                R[2, 0], R[2, 1], R[2, 2], t[2, 0],
-                file=log_fopen)
-        elif args.output_format == 'tum':
-            timestamp = dataloader.get_timestamp()
-            q = matrix_to_quaternion([[R[0, 0], R[0, 1], R[0, 2]],
-                                        [R[1, 0], R[1, 1], R[1, 2]],
-                                        [R[2, 0], R[2, 1], R[2, 2]]])
-            print(str(timestamp), t[0, 0], t[1, 0], t[2, 0], q[0], q[1], q[2], q[3],
-                file=log_fopen)
+    
+        timestamp = dataloader.get_timestamp()
+        q = matrix_to_quaternion([[R[0, 0], R[0, 1], R[0, 2]],
+                                    [R[1, 0], R[1, 1], R[1, 2]],
+                                    [R[2, 0], R[2, 1], R[2, 2]]])
+        print(str(timestamp), t[0, 0], t[1, 0], t[2, 0], q[0], q[1], q[2], q[3],
+            file=log_fopen)
 
     sys.exit(0)
     
 
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('pipeline_config', type=str, help='Path to the pipeline configuration file')
-    parser.add_argument('--output_path', type=str, default = '/root/modvo/results/', help='path to save all outputs')
-    parser.add_argument('--trajectory_file', type=str, default = 'trajectory.txt', help='name of the trajectory file')
-    parser.add_argument('--output_format', type=str, default = 'kitti', help='file format to save trajectory (either kitti or tum)')
-    parser.add_argument('--enable_gui', action='store_true', help='use this flag to enable gui')
-    args = parser.parse_args()
-    return args
-
-
 if __name__ == "__main__":
-    args = parse_args()
-    main(args)
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--dataset_config', type=str, default='configs/photo_vo.yaml', help='Path to dataset config file')
+    parser.add_argument('--model_config', type=str, default='configs/photo_vo_model.yaml', help='Path to model config file')
+    parser.add_argument('--model_path', type=str, default='checkpoints/photovo.tar', help='Path to model checkpoint')
+    parser.add_argument('--enable_gui', action='store_true', help='Enable GUI for visualization')
+    parser.add_argument('--output_path', type=str, default='results', help='Path to output directory')
+    parser.add_argument('--trajectory_file', type=str, default='traj.txt', help='Path to output trajectory file')
+    args = parser.parse_args()
+    
+    main()
