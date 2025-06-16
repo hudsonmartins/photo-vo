@@ -3,9 +3,9 @@ from torch import nn
 import gluefactory as gf
 from timesformer.models.vit import VisionTransformer
 from functools import partial
+from collections import OrderedDict
 
-from utils import get_patches, make_intrinsics_layer, get_sorted_matches, matrix_to_euler_angles
-from loss import pose_error
+from utils import get_patches, make_intrinsics_layer, get_sorted_matches
 
 
 class PatchEncoder(nn.Module):
@@ -73,19 +73,54 @@ class ImagePairEncoder(nn.Module):
                             drop_path_rate=0.1,
                             num_frames=2,
                             attention_type='divided_space_time')
-        if(config.vit.pretrained):
-            checkpoint = torch.load(config.vit.pretrained_weights, map_location=torch.device("cuda"))
-            self.vit.load_state_dict(checkpoint['model'])
+        
+        self.adapter = nn.Sequential(
+            nn.Conv2d(5, 3, kernel_size=1, bias=False)
+        )
         self.vit.head = torch.nn.Identity() #remove last linear layer
+
+        if config.vit.pretrained_weights:
+            checkpoint = torch.load(config.vit.pretrained_weights, map_location="cpu")
+            vo_regressor_state_dict = checkpoint['model_state_dict']
+
+            vit_state_dict = OrderedDict()
+            adapter_state_dict = OrderedDict()
+
+            for key, value in vo_regressor_state_dict.items():
+                if key.startswith('encoder.vit.'):
+                    new_key = key.replace('encoder.vit.', '', 1)
+                    vit_state_dict[new_key] = value
+                elif key.startswith('adapter.'):
+                    new_key = key.replace('adapter.', '', 1)
+                    adapter_state_dict[new_key] = value
+
+            # Load the filtered weights
+            self.vit.load_state_dict(vit_state_dict, strict=True)
+            self.adapter.load_state_dict(adapter_state_dict, strict=True)
+
+
         
     def forward(self, data):
         im0 = torch.clamp(data['view0']['image'], 0, 1)
         im1 = torch.clamp(data['view1']['image'], 0, 1)
+
+        intrinsics_layer = make_intrinsics_layer(
+            im0.shape[2], im0.shape[3], data['K']
+        )
+        im0 = torch.cat([im0, intrinsics_layer], dim=1) # B x 5 x H x W
+        im1 = torch.cat([im1, intrinsics_layer], dim=1) # B x 5 x H x W
+
+        im0 = self.adapter(im0) # B x 3 x H x W
+        im1 = self.adapter(im1) # B x 3 x H x W
+
         im0 = im0.unsqueeze(1)
         im1 = im1.unsqueeze(1)
         x = torch.cat([im0, im1], dim=1)
+
+        # Reshape for ViT (B x C x T x H x W)
         x = x.transpose(1, 2)
         x = self.vit(x)
+    
         return x
 
 class MotionEstimator(nn.Module):
@@ -184,17 +219,5 @@ class PhotoVoModel(nn.Module):
 
         return {**data, **self.features}
 
-
-    def loss(self, data):
-        pred = data['pred_vo']
-        gt_R = data['T_0to1'].R
-        gt_t = data['T_0to1'].t
-        gt = torch.cat((matrix_to_euler_angles(gt_R, "ZYX"), gt_t), dim=1)
-        pe = pose_error(gt, pred)
-        data['gt_vo'] = gt
-        loss = {'pose_error': pe, 'total': pe}
-        
-        return loss, data    
-    
 def get_photo_vo_model(config):
     return PhotoVoModel(config)    

@@ -1,10 +1,16 @@
 import os
 import torch
 import random
+import numpy as np
 from PIL import Image
 from torchvision import transforms
-from queenscamp import QueensCAMP
-from kitti import KITTI
+SEED = 42
+random.seed(SEED)
+np.random.seed(SEED)
+torch.manual_seed(SEED)
+torch.cuda.manual_seed(SEED)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
 
 def add_gamma(img):
     # Apply gamma correction
@@ -48,75 +54,110 @@ def get_iterator(datasets_names, train, **kwargs):
             datasets.append(get_kitti(**kwargs['kitti'], train=train))
         elif(dataset == 'queenscamp'):
             datasets.append(get_queenscamp(**kwargs['queenscamp'], train=train))
+        elif(dataset == 'tartanair'):
+            datasets.append(get_tartanair(**kwargs['tartanair'], train=train))
         else:
             raise ValueError(f"Unknown dataset: {dataset}")
         
     return torch.utils.data.DataLoader(torch.utils.data.ConcatDataset(datasets), batch_size=kwargs['batch_size'], shuffle=train)
    
-
-def get_kitti(data_path, size, train_sequences, val_sequences, max_skip, train):
-    if(train):
-        preprocess = transforms.Compose([
+def _get_preprocess_pipeline(train):
+    if train:
+        gamma_transform = transforms.Lambda(add_gamma)
+        occlusion_transform = transforms.Lambda(add_occlusion)
+        return transforms.Compose([
             transforms.ToTensor(),
-            transforms.Lambda(lambda x: add_gamma(x) if random.random() < 0.3 else x),
+            transforms.RandomApply([gamma_transform], p=0.3),
             transforms.RandomApply([transforms.ColorJitter(0.3, 0.3, 0.3, 0.1)], p=0.5),
             transforms.RandomApply([transforms.GaussianBlur(5, (0.1, 1.0))], p=0.3),
-            transforms.Lambda(lambda x: add_occlusion(x) if random.random() < 0.1 else x)
+            transforms.RandomApply([occlusion_transform], p=0.1)
         ])
     else:
-        preprocess = transforms.Compose([
+        return transforms.Compose([
             transforms.ToTensor(),
         ])
+    
+def get_kitti(data_path, size, train_sequences, val_sequences, max_skip, train):
+    from kitti import KITTI
+    preprocess = _get_preprocess_pipeline(train)
     return KITTI(os.path.join(data_path, 'sequences'), 
                 os.path.join(data_path, 'poses'), 
                 transform=preprocess, 
                 sequences=train_sequences if train else val_sequences,
                 resize=size,
                 apply_rcr=train,
-                max_skip=max_skip)
+                max_skip=max_skip if train else 0)
     
 
 def get_queenscamp(data_path, size, train_sequences, val_sequences, max_skip, train):
-    if train:
-        preprocess = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.RandomApply([transforms.ColorJitter(0.3, 0.3, 0.3, 0.1)], p=0.5),
-            transforms.RandomApply([transforms.GaussianBlur(5, (0.1, 1.0))], p=0.3),
-            transforms.Lambda(lambda x: add_occlusion(x) if random.random() < 0.1 else x)
-        ])
-    else:
-        preprocess = transforms.Compose([
-            transforms.ToTensor(),
-        ])
-
+    from queenscamp import QueensCAMP
+    preprocess = _get_preprocess_pipeline(train)
     return QueensCAMP(data_path=data_path,
                       resize=size,
                       apply_rcr=train,
-                      max_skip=max_skip,
+                      max_skip=max_skip if train else 0,
                       sequences=train_sequences if train else val_sequences, 
                       transform=preprocess)
-    
+
+def get_tartanair(data_path, size, train_sequences, val_sequences, max_skip, train):
+    from tartanair import TartanAir
+
+    preprocess = _get_preprocess_pipeline(train)
+    train_environments = train_sequences
+    val_environments = val_sequences
+
+    train_sequences = []
+    for env in train_environments:
+        if os.path.exists(os.path.join(data_path, env, 'Easy')):
+            folders = os.listdir(os.path.join(data_path, env, 'Easy'))
+            train_sequences += [os.path.join(env, 'Easy', folder) for folder in folders]
+        if os.path.exists(os.path.join(data_path, env, 'Hard')):
+            folders = os.listdir(os.path.join(data_path, env, 'Hard'))
+            train_sequences += [os.path.join(env, 'Hard', folder) for folder in folders]
+                
+    val_sequences = []
+    for env in val_environments:
+        if os.path.exists(os.path.join(data_path, env, 'Easy')):
+            folders = os.listdir(os.path.join(data_path, env, 'Easy'))
+            val_sequences += [os.path.join(env, 'Easy', folder) for folder in folders]
+        if os.path.exists(os.path.join(data_path, env, 'Hard')):
+            folders = os.listdir(os.path.join(data_path, env, 'Hard'))
+            val_sequences += [os.path.join(env, 'Hard', folder) for folder in folders]
+
+    return TartanAir(data_path=data_path,
+                     sequences=train_sequences if train else val_sequences,
+                     resize=size,
+                     apply_rcr=train,
+                     max_skip=max_skip if train else 0,
+                     transform=preprocess)
     
 if __name__ == "__main__":
     import numpy as np
     import matplotlib.pyplot as plt
 
     loader = get_iterator(
-        datasets_names=['kitti', 'queenscamp'],
+        datasets_names=['tartanair','kitti', 'queenscamp'],
         train=True,
         kitti = {
             'data_path': '/home/hudson/Desktop/Unicamp/datasets/kitti',
             'size': (640, 640),
             'train_sequences': ["01","08"],
-            'val_sequences': ["08"],
-            'max_skip': 5
+            'val_sequences': ["03"],
+            'max_skip': 0
         },
         queenscamp = {
             'data_path': '/home/hudson/Desktop/Unicamp/datasets/queenscamp',
             'train_sequences': ["16"],
             'val_sequences': ["16"],
             'size': (640, 640),
-            'max_skip': 5
+            'max_skip': 0
+        },
+        tartanair = {
+            'data_path': '/home/hudson/Desktop/Unicamp/datasets/tartanair',
+            'train_sequences': ["abandonedfactory"],
+            'val_sequences': [""],
+            'size': (640, 640),
+            'max_skip': 0
         },
         batch_size=1
     )

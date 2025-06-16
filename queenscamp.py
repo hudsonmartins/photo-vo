@@ -20,11 +20,11 @@ class QueensCAMP(Dataset):
                  resize=(640, 640),
                  max_skip=0,
                  transform=None):
-        # KITTI normalization
-        self.mean_angles = np.array([1.7061e-5, 9.5582e-4, -5.5258e-5])
-        self.std_angles = np.array([2.8256e-3, 1.7771e-2, 3.2326e-3])
-        self.mean_t = np.array([-8.6736e-5, -1.6038e-2, 9.0033e-1])
-        self.std_t = np.array([2.5584e-2, 1.8545e-2, 3.0352e-1])
+        # normalization
+        self.mean_angles = np.array([0.0, 0.0, 0.0])
+        self.std_angles = np.array([0.01,0.01,0.01])
+        self.mean_t = np.array([0.0, 0.0, 0.0])
+        self.std_t = np.array([0.2,0.2,0.2])
 
         self.data_path = data_path
         self.max_skip = max_skip
@@ -34,79 +34,66 @@ class QueensCAMP(Dataset):
 
         self.sequences = sequences
 
-        frames, seqs = self.read_frames()
-        gt = self.read_gt()
-        Ks = self.read_K()
-        self.pairs = self.create_pairs(frames, seqs, gt, Ks)
+        self.sequences_data = self.read_sequences()
+        self.pairs = self.create_pairs()
         
 
-    def read_frames(self):
-        # Get frames list
-        frames = []
-        seqs = []
-        for sequence in self.sequences:
-            frames_dir = os.path.join(self.data_path, 
-                                      "sequences", 
-                                      sequence, 
-                                      "images", 
-                                      "*.png")
-            frames_seq = sorted(glob.glob(frames_dir))
-            frames = frames + frames_seq
-            seqs = seqs + [sequence] * len(frames_seq)
-        return frames, seqs
+    def read_sequences(self):
+        sequences_data = {}
+        for seq in self.sequences:
+            # Read image paths
+            image_dir = os.path.join(self.data_path, "sequences", seq, "images")
+            images = sorted(glob.glob(os.path.join(image_dir, '*.png')))
 
-
-    def read_gt(self):
-        # Read ground truth
-        gt = []
-        for sequence in self.sequences:
-            gt_path = os.path.join(self.data_path,
-                                    "sequences", 
-                                    sequence, 
-                                    "traj.txt")
-            with open(os.path.join(gt_path)) as f:
+            # Read intrinsics
+            calib_file = os.path.join(self.data_path, 'rgb_camera_info.txt')
+            with open(calib_file, 'r') as f:
+                params = {}
                 for line in f:
-                    tokens = line.strip().split()
-                    tx, ty, tz = map(float, tokens[1:4])
-                    qx, qy, qz, qw = map(float, tokens[4:8])
-                    R_mat = R.from_quat([qx, qy, qz, qw]).as_matrix()
-                    T = np.eye(4)
-                    T[:3, :3] = R_mat
-                    T[:3, 3] = [tx, ty, tz]
-                    gt.append(T)
-        return gt
+                    line = line.strip()
+                    if not line:
+                        continue
+                    key, value = line.split(':', 1)
+                    key = key.strip()
+                    value = value.strip()
+                    if key in ['height', 'width']:
+                        params[key] = int(value)
+                    elif key == 'distortion_model':
+                        params[key] = value.strip('"')
+                    else:
+                        value = value.strip('[]')
+                        value_list = [float(v.strip()) for v in value.split(',')]
+                        params[key] = value_list
+
+                fx = params['K'][0]
+                fy = params['K'][4]
+                cx = params['K'][2]
+                cy = params['K'][5]
+                K = [fx, fy, cx, cy]
+
+            # Read poses
+            with open(os.path.join(self.data_path, "sequences", seq, "traj.txt")) as f:
+                lines = f.readlines()
+            poses = []
+            for line in lines:
+                tokens = line.strip().split()
+                tx, ty, tz = map(float, tokens[1:4])
+                qx, qy, qz, qw = map(float, tokens[4:8])
+                R_mat = R.from_quat([qx, qy, qz, qw]).as_matrix()
+                T = np.eye(4)
+                T[:3, :3] = R_mat
+                T[:3, 3] = [tx, ty, tz]
+                poses.append(T)
+            poses = np.array(poses, dtype=np.float32)
+
+            sequences_data[seq] = {
+                'images': images,
+                'poses': poses,
+                'K': K
+            }
+
+        return sequences_data
     
-    def read_K(self):
-        calib_path = os.path.join(self.data_path, 'rgb_camera_info.txt')
-        with open(calib_path, 'r') as f:
-            params = {}
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                key, value = line.split(':', 1)
-                key = key.strip()
-                value = value.strip()
-                if key in ['height', 'width']:
-                    params[key] = int(value)
-                elif key == 'distortion_model':
-                    params[key] = value.strip('"')
-                else:
-                    value = value.strip('[]')
-                    value_list = [float(v.strip()) for v in value.split(',')]
-                    params[key] = value_list
-
-        # Extract fx, fy, cx, cy from K
-        fx = params['K'][0]
-        fy = params['K'][4]
-        cx = params['K'][2]
-        cy = params['K'][5]
-
-        K_dict = {}
-        for sequence in self.sequences:
-            K_dict[sequence] = [fx, fy, cx, cy]
-        return K_dict
-
     def convert_to_kitti_frame(self, pose):
         # KITTI: x (right), y (down), z (forward)
         # QueensCAMP: x (forward), y (left), z (up)
@@ -146,30 +133,29 @@ class QueensCAMP(Dataset):
         return torch.FloatTensor(np.concatenate([angles, t]))
 
 
-    def create_pairs(self, frames, seqs, gt, Ks):
+    def create_pairs(self):
         pairs = []
-        current_seq = None
-        
-        for idx, (frame, seq) in enumerate(zip(frames, seqs)):
-            if seq != current_seq:
-                current_seq = seq
-                
-            skip = random.randint(1, self.max_skip+1)
-            next_idx = idx + skip
-            
-            # check if next frame is in the same sequence and within bounds
-            if next_idx < len(frames) and seqs[next_idx] == seq:
-                pose1 = np.array(gt[idx])
-                pose2 = np.array(gt[next_idx])
-                
+        for seq, data in self.sequences_data.items():
+            images = data['images']
+            poses = data['poses']
+            K = data['K']
+
+            for i in range(len(images) - 1):
+                skip = random.randint(1, self.max_skip + 1)
+                j = i + skip
+                if j >= len(images):
+                    continue
+
+                pose1 = np.array(poses[i])
+                pose2 = np.array(poses[j])
+
                 pairs.append({
-                    'frame1': frame,
-                    'frame2': frames[next_idx],
+                    'frame1': images[i],
+                    'frame2': images[j],
                     'pose1': pose1,
                     'pose2': pose2,
-                    'K': Ks[seq]
+                    'K': K
                 })
-        
         return pairs
 
 
@@ -206,9 +192,15 @@ class QueensCAMP(Dataset):
     def __getitem__(self, idx):
         pair = self.pairs[idx]
         
-        # load images
-        img1 = Image.open(pair['frame1']).convert('RGB')
-        img2 = Image.open(pair['frame2']).convert('RGB')
+        img1_path, img2_path = pair['frame1'], pair['frame2']
+        pose1, pose2 = pair['pose1'], pair['pose2']
+        # Randomly swap images and poses for data augmentation
+        if self.transform and np.random.rand() < 0.5:
+            img1_path, img2_path = img2_path, img1_path
+            pose1, pose2 = pose2, pose1
+
+        img1 = Image.open(img1_path).convert('RGB')
+        img2 = Image.open(img2_path).convert('RGB')
         
         if self.apply_rcr:
             img1, img2, K = self.rcr(img1, img2, pair['K'])
@@ -227,20 +219,8 @@ class QueensCAMP(Dataset):
             img1 = self.transform(img1)
             img2 = self.transform(img2)
             
-        # load poses
-        pose1 = pair['pose1']
-        pose2 = pair['pose2']
-
-        if self.transform:
-            # randomly decide to reverse the pair
-            reverse = random.random() < 0.5
-            if reverse:
-                img1, img2 = img2, img1
-                rel_pose = self.compute_relative_pose(pose2, pose1)
-            else:
-                rel_pose = self.compute_relative_pose(pose1, pose2)
-        else:
-            rel_pose = self.compute_relative_pose(pose1, pose2)
+                
+        rel_pose = self.compute_relative_pose(pose1, pose2)
 
         # Combine into tensor
         img1 = img1.unsqueeze(0)

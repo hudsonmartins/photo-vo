@@ -1,27 +1,25 @@
 data:
-    name: megadepth
-    seed: 42
-    preprocessing:
-        resize: 1024
-        side: long
-        square_pad: True
-    train_split: train_scenes_tests.txt
-    train_num_per_scene: 5
-    val_split: valid_scenes_tests.txt
-    val_pairs: valid_pairs.txt
-    min_overlap: 0.6
-    max_overlap: 1.0
-    num_overlap_bins: 1
-    read_depth: true
-    read_image: true
-    batch_size: 1
-    num_workers: 8
-    load_features:
-        do: false  # enable this if you have cached predictions
-        path: exports/megadepth-undist-depth-r1024_pycolmap_SIFTGPU-nms3-fixed-k2048/{scene}.h5
-        padding_length: 2048
-        padding_fn: pad_local_features
-        data_keys: ["keypoints", "keypoint_scores", "descriptors", "oris", "scales"]
+  seed: 42
+  datasets_names:
+    - kitti
+    - queenscamp
+  kitti:
+    data_path: /home/hudson/Desktop/Unicamp/datasets/kitti #/home/hudson/data/kitti
+    size: [640, 640]
+    max_skip: 0
+    train_sequences: 
+      - "08"
+    val_sequences:
+      - "03"
+  queenscamp:
+    data_path: /home/hudson/Desktop/Unicamp/datasets/queenscamp
+    size: [640, 640]
+    max_skip: 0
+    train_sequences: 
+      - "16"
+    val_sequences:
+      - "12"
+  batch_size: 1  
 features_model:
     name: two_view_pipeline
     freeze: True
@@ -35,27 +33,36 @@ features_model:
     matcher:
         name: matchers.lightglue
         features: superpoint
-        filter_threshold: 0.1
+        filter_threshold: 0.0
         flash: false
         checkpointed: true
         weights: weights/superpoint_lightglue.pth
-
     ground_truth:
         name: matchers.depth_matcher
         th_positive: 3
         th_negative: 5
         th_epi: 5
     allow_no_extract: True
+vit:
+  freeze: True
+  unfreeze_last: 4
+  patch_size: 16
+  dim_emb: 384
+  heads: 6
+  image_size: [640, 640]
+  depth: 12
+  pretrained: True
+  pretrained_weights: 'best_model_kitti_qc_tartan.pth'
 photo_vo:
     name: photo_vo
     model:
-        patch_size: 16
-        dim_emb: 64
-        num_matches: 50
-        loss_weights:
-          photometric: 0.25
-          pose: 0.5
-          match: 0.25
+      patch_size: 16
+      dim_emb: 384
+      num_matches: 128
+      loss_weights:
+        photometric: 0.0
+        pose: 1.0
+        match: 0.0
 train:
     seed: 0
     epochs: 10
@@ -63,5 +70,6 @@ train:
     log_every_iter: 2
     eval_every_iter: -1
     lr: 1e-4
+    save_every_epoch: 1
     #load_experiment: tests_megadepth
 
