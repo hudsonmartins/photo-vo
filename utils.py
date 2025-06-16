@@ -397,3 +397,4 @@ def translation_to_skew_symmetric(t):
     return np.array([[0, -t[2], t[1]],
                     [t[2], 0, -t[0]],
                     [-t[1], t[0], 0]])
+
