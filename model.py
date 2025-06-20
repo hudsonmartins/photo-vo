@@ -79,7 +79,7 @@ class ImagePairEncoder(nn.Module):
         )
         self.vit.head = torch.nn.Identity() #remove last linear layer
 
-        if config.vit.pretrained_weights:
+        if config.vit.pretrained:
             checkpoint = torch.load(config.vit.pretrained_weights, map_location="cpu")
             vo_regressor_state_dict = checkpoint['model_state_dict']
 
