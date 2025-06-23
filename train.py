@@ -17,7 +17,7 @@ from utils import batch_to_device, draw_camera_poses, draw_matches
 
 
 # Setup logging
-logger = logging.getLogger("kitti_train")
+logger = logging.getLogger("train")
 logger.setLevel(logging.INFO)
 handler = logging.StreamHandler()
 formatter = logging.Formatter(fmt="[%(asctime)s %(name)s %(levelname)s] %(message)s", datefmt="%m/%d/%Y %H:%M:%S")
@@ -37,6 +37,8 @@ default_train_conf = {
     "load_experiment": None,
     "tensorboard_dir": "runs",
     "best_loss": float("inf"),
+    "max_train_iter": 3000,
+    "max_val_iter": 500,
 }
 default_train_conf = OmegaConf.create(default_train_conf)
 
@@ -46,36 +48,46 @@ def compute_loss(pred, gt, criterion):
     return loss
 
 
-def val_epoch(model, val_loader, criterion, device):
+def val_epoch(model, val_loader, criterion, max_iters, device):
     epoch_loss = 0
-    with tqdm(val_loader, unit="batch") as tepoch:
-        for images, gt, Ks in tepoch:
-            tepoch.set_description(f"Validating ")
-            #images = images.transpose(1, 2).to(device)
-            data = {'view0': {'image': images[:, 0], 'depth': None, 'camera': None},
-                    'view1': {'image': images[:, 1], 'depth': None, 'camera': None},
-                    'K': Ks,
-                    'T_0to1': Pose.from_Rt(torch.eye(3).repeat(images.shape[0], 1, 1), gt[:, :3])}
-            data = batch_to_device(data, device, non_blocking=True)
-            output = model(data)
-            estimated_pose = output['pred_vo']    
-            gt = gt.to(device)
-            loss = compute_loss(estimated_pose, gt, criterion)
-            epoch_loss += loss.item()
-            tepoch.set_postfix(val_loss=loss.item())
-            sample = {'estimated': estimated_pose[0].detach().cpu(),
-                     'gt': gt[0].detach().cpu(),
-                     'view0': output['view0'],
-                     'view1': output['view1']}            
-    return epoch_loss / len(val_loader), sample
+    if max_iters is None or len(val_loader) < max_iters:
+        max_iters = len(val_loader)
+
+    with torch.no_grad():
+        with tqdm(val_loader, unit="batch", total=max_iters, desc="Validating") as tepoch:
+            for i, (images, gt, Ks) in enumerate(tepoch):
+                if i >= max_iters:
+                    break
+                tepoch.set_description(f"Validating ")
+                data = {'view0': {'image': images[:, 0], 'depth': None, 'camera': None},
+                        'view1': {'image': images[:, 1], 'depth': None, 'camera': None},
+                        'K': Ks}
+                data = batch_to_device(data, device, non_blocking=True)
+                output = model(data)
+                estimated_pose = output['pred_vo']    
+                gt = gt.to(device)
+                loss = compute_loss(estimated_pose, gt, criterion)
+                epoch_loss += loss.item()
+                tepoch.set_postfix(val_loss=loss.item())
+                if i == 0:
+                    sample = {'estimated': estimated_pose[0].detach().cpu(),
+                            'gt': gt[0].detach().cpu(),
+                            'view0': output['view0'],
+                            'view1': output['view1']}            
+    return epoch_loss/max_iters, sample
 
 
-def train_epoch(model, train_loader, criterion, optimizer, epoch, tensorboard_writer, device):
+def train_epoch(model, train_loader, criterion, optimizer, epoch, device, max_iters=None):
     epoch_loss = 0
-    iter = (epoch - 1) * len(train_loader) + 1
 
-    with tqdm(train_loader, unit="batch") as tepoch:
-        for images, gt, Ks in tepoch:
+    if max_iters is None or len(train_loader) < max_iters:
+        max_iters = len(train_loader)
+
+    with tqdm(train_loader, unit="batch", total=max_iters, desc="Training") as tepoch:
+    #with tqdm(train_loader, unit="batch") as tepoch:
+        for i, (images, gt, Ks) in enumerate(tepoch):
+            if i >= max_iters:
+                break
             tepoch.set_description(f"Epoch {epoch}")
             #images = images.transpose(1, 2).to(device)
             
@@ -108,18 +120,11 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, tensorboard_wr
             optimizer.step()
             epoch_loss += loss.item()
             tepoch.set_postfix(loss=loss.item())
-            tensorboard_writer.add_scalar("train/loss", loss.item(), iter)
-            iter += 1
             
-        origin = torch.tensor([0, 0, 0, 0, 0, 0])
-        fig_cameras = draw_camera_poses([origin[3:], estimated_pose[0,3:].detach().cpu(), gt[0,3:].detach().cpu()],
-                                        [origin[:3], estimated_pose[0,:3].detach().cpu(), gt[0,:3].detach().cpu()],
-                                        ["origin", "estimated", "gt"], dpi=700)
-        tensorboard_writer.add_figure("train/poses", fig_cameras, iter)
-    return epoch_loss / len(train_loader)  
+    return epoch_loss / max_iters 
 
 
-def train_tsformer(model, train_loader, val_loader, optimizer, device, config):
+def train(model, train_loader, val_loader, optimizer, device, config):
     criterion = pose_loss_norm
     writer = SummaryWriter(log_dir=config.train.tensorboard_dir)
     for epoch in range(config.train.epochs):
@@ -128,13 +133,13 @@ def train_tsformer(model, train_loader, val_loader, optimizer, device, config):
             model.imgenc.eval()
         if(config.features_model.freeze):
             model.matcher.eval()
-        train_loss = train_epoch(model, train_loader, criterion, optimizer, epoch, writer, device)
+        train_loss = train_epoch(model, train_loader, criterion, optimizer, epoch, max_iters=config.train.max_train_iter, device=device)
         logger.info(f"Epoch {epoch}, Train loss: {train_loss}")
         writer.add_scalar("train/loss_total", train_loss, epoch)
         
         with torch.no_grad():
             model.eval()
-            val_loss, sample = val_epoch(model, val_loader, criterion, device)
+            val_loss, sample = val_epoch(model, val_loader, criterion, max_iters=config.train.max_val_iter, device=device)
             logger.info(f"Epoch {epoch}, Validation loss: {val_loss}")
         
         logger.info(f"Epoch {epoch}, Validation loss: {val_loss}")
@@ -176,13 +181,8 @@ def main(args):
 
     init_cp = None
     if conf.train.load_experiment:
-        ckpts = sorted(glob.glob(os.path.join(conf.train.load_experiment, "checkpoint_*.tar")))
-        if ckpts:
-            init_cp = torch.load(ckpts[-1], map_location="cpu")
-            logger.info(f"Loaded checkpoint {ckpts[-1]}")
-        else:
-            init_cp = torch.load(os.path.join(conf.train.load_experiment, "best_model.tar"), map_location="cpu")
-            logger.info(f"Loaded checkpoint {conf.train.load_experiment}/best_model.tar")
+        init_cp = torch.load(os.path.join(conf.train.load_experiment, "best_model.tar"), map_location="cpu")
+        logger.info(f"Loaded checkpoint {conf.train.load_experiment}/best_model.tar")
    
     random.seed(conf.data.seed)
     np.random.seed(conf.data.seed)
@@ -222,7 +222,7 @@ def main(args):
             param.requires_grad = False 
 
     logger.info(f"Training with dataset config {conf.data}")
-    train_tsformer(model, train_loader, val_loader, optimizer, device, conf)
+    train(model, train_loader, val_loader, optimizer, device, conf)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
