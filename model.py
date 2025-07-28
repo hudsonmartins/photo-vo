@@ -4,7 +4,7 @@ import gluefactory as gf
 from timesformer.models.vit import VisionTransformer
 from functools import partial
 from collections import OrderedDict
-
+from voflowres import VOFlowRes
 from utils import get_patches, make_intrinsics_layer, get_sorted_matches
 
 
@@ -139,6 +139,149 @@ class MotionEstimator(nn.Module):
         
         return self.fc(fused)
 
+class CNNMotionEstimator(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.dim_emb = config.photo_vo.model.dim_emb
+        
+        self.feature_map_size = (192, 128)  # (H_feat, W_feat)
+        
+        self.global_local_fusion = nn.Sequential(
+            nn.Linear(self.dim_emb * 2, self.dim_emb),  
+            nn.ReLU(),
+            nn.LayerNorm(self.dim_emb)
+        )
+        
+        self.feature_densifier = nn.Sequential(
+            nn.Conv2d(self.dim_emb, self.dim_emb, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(self.dim_emb, self.dim_emb, kernel_size=3, padding=1),
+            nn.ReLU()
+        )
+        
+        self.projection = nn.Conv2d(self.dim_emb, 4, kernel_size=1)
+        
+        self.regressor = VOFlowRes()
+        self.load_pretrained("weights/tartanvo_1914.pkl")
+
+        self.original_img_height = config.vit.image_size[0]
+        self.original_img_width = config.vit.image_size[1]
+
+    def load_pretrained(self, path):
+        print(f"Loading pretrained VOFlowRes weights from {path}...")
+        voflow_state_dict = torch.load(path, map_location="cpu")
+        
+        renamed_state_dict = OrderedDict()
+        prefix_to_find = 'flowPoseNet.'
+        
+        for key, value in voflow_state_dict.items():
+            if key.startswith(prefix_to_find):
+                new_key = key.replace(prefix_to_find, 'regressor.', 1)
+                renamed_state_dict[new_key] = value
+
+        if not renamed_state_dict:
+            print("No keys matched 'flowPoseNet.'. Trying 'module.flowPoseNet.' for DataParallel model...")
+            prefix_to_find = 'module.flowPoseNet.'
+            for key, value in voflow_state_dict.items():
+                if key.startswith(prefix_to_find):
+                    new_key = key.replace(prefix_to_find, 'regressor.', 1)
+                    renamed_state_dict[new_key] = value
+
+        if not renamed_state_dict:
+            print("Warning: Could not find any VOFlowRes weights in the checkpoint.")
+            return
+
+        self.load_state_dict(renamed_state_dict, strict=False)
+
+    def forward(self, image_embs, patch_embs, patch_coords):
+        B, N, D = patch_embs.shape
+        H_feat, W_feat = self.feature_map_size
+        
+        # Fuse global and local features
+        global_expanded = image_embs.unsqueeze(1).expand(-1, N, -1)
+        fused_features = torch.cat([patch_embs, global_expanded], dim=-1)
+        fused_features = self.global_local_fusion(fused_features)
+
+        # Create initial sparse feature map
+        feature_map = torch.zeros(B, D, H_feat, W_feat, device=patch_embs.device, dtype=patch_embs.dtype)
+        weight_map = torch.zeros(B, 1, H_feat, W_feat, device=patch_embs.device, dtype=patch_embs.dtype)
+        
+        # Scale coordinates
+        scaled_coords_x = torch.clamp(
+            (patch_coords[..., 0] / self.original_img_width * (W_feat - 1)),
+            min=0, max=W_feat - 1
+        )
+        scaled_coords_y = torch.clamp(
+            (patch_coords[..., 1] / self.original_img_height * (H_feat - 1)),
+            min=0, max=H_feat - 1
+        )
+        
+        # Handle invalid coordinates (e.g., -1 for non-matches)
+        valid_mask = (patch_coords[..., 0] >= 0)
+        
+        # Use bilinear interpolation to place features more smoothly
+        for b in range(B):
+            valid_indices = valid_mask[b]
+            if not valid_indices.any():
+                continue
+                
+            valid_x = scaled_coords_x[b][valid_indices]
+            valid_y = scaled_coords_y[b][valid_indices]
+            valid_feats = fused_features[b][valid_indices]
+            
+            x0 = torch.floor(valid_x).long()
+            y0 = torch.floor(valid_y).long()
+            x1 = torch.clamp(x0 + 1, max=W_feat - 1)
+            y1 = torch.clamp(y0 + 1, max=H_feat - 1)
+            
+            wx = valid_x - x0.float()
+            wy = valid_y - y0.float()
+            
+            w00 = ((1 - wx) * (1 - wy)).unsqueeze(1)
+            w01 = ((1 - wx) * wy).unsqueeze(1)
+            w10 = (wx * (1 - wy)).unsqueeze(1)
+            w11 = (wx * wy).unsqueeze(1)
+
+            fm_2d_t = torch.zeros(H_feat * W_feat, D, device=patch_embs.device, dtype=patch_embs.dtype)
+            wm_1d = weight_map[b, 0].view(H_feat * W_feat)
+            
+            # Calculate 1D indices for each of the 4 corners
+            idx00 = y0 * W_feat + x0
+            idx10 = y1 * W_feat + x0
+            idx01 = y0 * W_feat + x1
+            idx11 = y1 * W_feat + x1
+
+            fm_2d_t.index_add_(0, idx00, w00 * valid_feats)
+            fm_2d_t.index_add_(0, idx10, w01 * valid_feats)
+            fm_2d_t.index_add_(0, idx01, w10 * valid_feats)
+            fm_2d_t.index_add_(0, idx11, w11 * valid_feats)
+            feature_map[b] = fm_2d_t.T.view(D, H_feat, W_feat)
+
+            wm_1d = torch.zeros(H_feat * W_feat, device=patch_embs.device, dtype=patch_embs.dtype)
+            wm_1d.index_add_(0, idx00, w00.squeeze(1))
+            wm_1d.index_add_(0, idx10, w01.squeeze(1))
+            wm_1d.index_add_(0, idx01, w10.squeeze(1))
+            wm_1d.index_add_(0, idx11, w11.squeeze(1))
+            weight_map[b, 0] = wm_1d.view(H_feat, W_feat)
+            
+        # Reshape feature map back to 2D
+        feature_map = feature_map.view(B, D, H_feat, W_feat)
+        weight_map = weight_map.view(B, 1, H_feat, W_feat)
+        
+        # Normalize by weights to handle overlapping features
+        weight_map = torch.clamp(weight_map, min=1e-8)
+        feature_map = feature_map / weight_map
+        
+        # Densify the sparse feature map
+        dense_features = self.feature_densifier(feature_map)
+        
+        # Project to 4 channels for VOFlowRes
+        projected_map = self.projection(dense_features)
+        pose = self.regressor(projected_map)
+        return pose
+    
+
 class PhotoVoModel(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -146,7 +289,7 @@ class PhotoVoModel(nn.Module):
         self.imgenc = ImagePairEncoder(config)
         self.matcher = gf.models.get_model(config.features_model.name)(config.features_model)
         self.penc = PatchEncoder(config)
-        self.motion_estimator = MotionEstimator(config)
+        self.motion_estimator = CNNMotionEstimator(config)
         self.features = None
         
     def forward(self, data):
@@ -214,10 +357,10 @@ class PhotoVoModel(nn.Module):
         data['view1']['scores'] = scores1_valid
 
         patch_embs = self.penc(data) 
-        output = self.motion_estimator(image_embs, patch_embs)
+        output = self.motion_estimator(image_embs, patch_embs, torch.cat([kpts0_valid, kpts1_valid], dim=1))
         data['pred_vo'] = output
 
         return {**data, **self.features}
 
 def get_photo_vo_model(config):
-    return PhotoVoModel(config)    
+    return PhotoVoModel(config)
