@@ -13,9 +13,8 @@ from torchvision import transforms
 
 from modvo.vo.tracker import Tracker
 
-#kitti pose mean and std
-KITT_MEAN = [1.7061e-5, 9.5582e-4, -5.5258e-5, -8.6736e-5, -1.6038e-2, 9.0033e-1]
-KITTI_STD = [2.8256e-3, 1.7771e-2, 3.2326e-3, 2.5584e-2, 1.8545e-2, 3.0352e-1]
+POSE_MEAN = [0,0,0,0,0,0]
+POSE_STD = [0.01, 0.01, 0.01, 0.2, 0.2, 0.2]
 
 class PhotoVOTracker(Tracker):
     def __init__(self, **params):
@@ -34,11 +33,14 @@ class PhotoVOTracker(Tracker):
             transforms.Resize((640, 640)),
             transforms.ToTensor(),
         ])
+        sx = 640 / self.img0.size[0]
+        sy = 640 / self.img0.size[1]
+        
         imgs = [preprocess(img).unsqueeze(0) for img in [self.img0, self.img1]]
         data = {'view0': {'image': imgs[0].to(self.device)}, 
                 'view1': {'image': imgs[1].to(self.device)},
-                'K': torch.tensor([self.camera.fx, self.camera.fy, 
-                                   self.camera.cx, self.camera.cy]).to(self.device).unsqueeze(0)}
+                'K': torch.tensor([self.camera.fx*sx, self.camera.fy*sy, 
+                                   self.camera.cx*sx, self.camera.cy*sy]).to(self.device).unsqueeze(0)}
         return data
         
     
@@ -55,7 +57,7 @@ class PhotoVOTracker(Tracker):
                 output = self.photo_vo_model(data)
                 vo = output['pred_vo']
                 vo = vo.squeeze(0)
-                vo = vo * torch.tensor(KITTI_STD).to(self.device) + torch.tensor(KITT_MEAN).to(self.device)
+                vo = vo * torch.tensor(POSE_STD).to(self.device) + torch.tensor(POSE_MEAN).to(self.device)
                 t = vo[3:].reshape(3, 1).detach().cpu().numpy()
                 R = euler_angles_to_matrix(vo[:3], "ZYX").reshape(3, 3).detach().cpu().numpy()
                 self.t = self.t + self.R.dot(t)
