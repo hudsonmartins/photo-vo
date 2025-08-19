@@ -1,0 +1,28 @@
+# Core ML stack
+torch>=1.10
+torchvision>=0.11
+
+# Array & math
+numpy>=1.20
+scipy>=1.6
+
+# Vision & image IO
+opencv-python>=4.5
+Pillow>=8.0
+
+# Training utils
+omegaconf>=2.1
+tqdm>=4.62
+tensorboard>=2.4
+matplotlib>=3.3
+
+# Misc utilities used by timesformer and scripts
+einops>=0.3
+fvcore>=0.1.5
+scikit-learn>=0.24
+psutil>=5.8
+simplejson>=3.17
+
+# Local packages (editable installs)
+# Glue Factory is present at the workspace root as a sibling folder and is required by this project.
+-e ../glue-factory
