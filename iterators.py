@@ -4,6 +4,7 @@ import random
 import numpy as np
 from PIL import Image
 from torchvision import transforms
+from torch.utils.data import ConcatDataset, DataLoader, WeightedRandomSampler
 SEED = 42
 random.seed(SEED)
 np.random.seed(SEED)
@@ -49,6 +50,7 @@ def get_iterator(datasets_names, train, **kwargs):
     Create a combined iterator for multiple datasets.
     """
     datasets = []
+    balanced_sampling = kwargs.get('balanced_sampling', True) if train else False
     for dataset in datasets_names:
         if(dataset == 'kitti'):
             datasets.append(get_kitti(**kwargs['kitti'], train=train))
@@ -59,7 +61,20 @@ def get_iterator(datasets_names, train, **kwargs):
         else:
             raise ValueError(f"Unknown dataset: {dataset}")
         
-    return torch.utils.data.DataLoader(torch.utils.data.ConcatDataset(datasets), batch_size=kwargs['batch_size'], shuffle=train)
+    concat = ConcatDataset(datasets)
+
+    # Balanced sampling across datasets using per-sample weights (optional)
+    if balanced_sampling and len(datasets) > 1:
+        lengths = [len(d) for d in datasets]
+        # Each sample in dataset i gets weight 1/len_i so each dataset sums to 1
+        weights = []
+        for li in lengths:
+            wi = 1.0 / max(li, 1)
+            weights.extend([wi] * li)
+        sampler = WeightedRandomSampler(weights, num_samples=sum(lengths), replacement=True)
+        return DataLoader(concat, batch_size=kwargs['batch_size'], sampler=sampler, shuffle=False)
+
+    return DataLoader(concat, batch_size=kwargs['batch_size'], shuffle=train)
    
 def _get_preprocess_pipeline(train):
     if train:
