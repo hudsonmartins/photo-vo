@@ -151,7 +151,7 @@ class TartanAir(Dataset):
             Randomly crops a region from the images and adjusts the camera intrinsics accordingly.
         '''
         original_size = img1.size
-        crop_scale = random.uniform(0.4, 1.0)
+        crop_scale = random.uniform(0.7, 1.0)
         crop_width = int(original_size[0] * crop_scale)
         crop_height = int(original_size[1] * crop_scale)
         x0 = random.randint(0, original_size[0] - crop_width)

@@ -39,16 +39,19 @@ default_train_conf = {
     "best_loss": float("inf"),
     "max_train_iter": 3000,
     "max_val_iter": 500,
+    "balanced_sampling": True,
+    "lambda_t": 1.0,
+    "lambda_r": 1.0,
 }
 default_train_conf = OmegaConf.create(default_train_conf)
 
 
-def compute_loss(pred, gt, criterion):
-    loss = criterion(pred, gt.float())
+def compute_loss(pred, gt, criterion, lambda_t=1.0, lambda_r=1.0):
+    loss = criterion(pred, gt.float(), lambda_t=lambda_t, lambda_r=lambda_r)
     return loss
 
 
-def val_epoch(model, val_loader, criterion, max_iters, device):
+def val_epoch(model, val_loader, criterion, max_iters, device, lambda_t=1.0, lambda_r=1.0):
     epoch_loss = 0
     if max_iters is None or len(val_loader) < max_iters:
         max_iters = len(val_loader)
@@ -66,7 +69,7 @@ def val_epoch(model, val_loader, criterion, max_iters, device):
                 output = model(data)
                 estimated_pose = output['pred_vo']    
                 gt = gt.to(device)
-                loss = compute_loss(estimated_pose, gt, criterion)
+                loss = compute_loss(estimated_pose, gt, criterion, lambda_t=lambda_t, lambda_r=lambda_r)
                 epoch_loss += loss.item()
                 tepoch.set_postfix(val_loss=loss.item())
                 if i == 0:
@@ -77,7 +80,7 @@ def val_epoch(model, val_loader, criterion, max_iters, device):
     return epoch_loss/max_iters, sample
 
 
-def train_epoch(model, train_loader, criterion, optimizer, epoch, device, max_iters=None):
+def train_epoch(model, train_loader, criterion, optimizer, epoch, device, max_iters=None, lambda_t=1.0, lambda_r=1.0):
     epoch_loss = 0
 
     if max_iters is None or len(train_loader) < max_iters:
@@ -99,7 +102,7 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, device, max_it
             output = model(data)
             estimated_pose = output['pred_vo']
             gt = gt.to(device)
-            loss = compute_loss(estimated_pose, gt, criterion)
+            loss = compute_loss(estimated_pose, gt, criterion, lambda_t=lambda_t, lambda_r=lambda_r)
             if torch.isnan(loss):
                 logger.error("Encountered NaN loss!")
 
@@ -133,13 +136,13 @@ def train(model, train_loader, val_loader, optimizer, device, config):
             model.imgenc.eval()
         if(config.features_model.freeze):
             model.matcher.eval()
-        train_loss = train_epoch(model, train_loader, criterion, optimizer, epoch, max_iters=config.train.max_train_iter, device=device)
+        train_loss = train_epoch(model, train_loader, criterion, optimizer, epoch, max_iters=config.train.max_train_iter, device=device, lambda_t=config.train.lambda_t, lambda_r=config.train.lambda_r)
         logger.info(f"Epoch {epoch}, Train loss: {train_loss}")
         writer.add_scalar("train/loss_total", train_loss, epoch)
         
         with torch.no_grad():
             model.eval()
-            val_loss, sample = val_epoch(model, val_loader, criterion, max_iters=config.train.max_val_iter, device=device)
+            val_loss, sample = val_epoch(model, val_loader, criterion, max_iters=config.train.max_val_iter, device=device, lambda_t=config.train.lambda_t, lambda_r=config.train.lambda_r)
             logger.info(f"Epoch {epoch}, Validation loss: {val_loss}")
         
         logger.info(f"Epoch {epoch}, Validation loss: {val_loss}")
@@ -190,8 +193,8 @@ def main(args):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(conf.data.seed)
 
-    train_loader = get_iterator(**conf.data, train=True)
-    val_loader = get_iterator(**conf.data, train=False)
+    train_loader = get_iterator(**conf.data, train=True, balanced_sampling=conf.train.balanced_sampling)
+    val_loader = get_iterator(**conf.data, train=False, balanced_sampling=False)
 
     os.makedirs(args.experiment, exist_ok=True)
            
@@ -214,6 +217,9 @@ def main(args):
         logger.info(f"Unfreezing the last {conf.vit.unfreeze_last} layers of the ViT model")
         
         for param in model.imgenc.vit.blocks[-conf.vit.unfreeze_last:].parameters():
+            param.requires_grad = True
+            
+        for param in model.imgenc.adapter.parameters(): 
             param.requires_grad = True
 
     if(conf.features_model.freeze):

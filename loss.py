@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 
 
-def pose_loss_norm(pred, gt, eps=1e-6):
+def pose_loss_norm(pred, gt, eps=1e-6, lambda_t: float = 1.0, lambda_r: float = 1.0, reduction: str = 'mean'):
     gt_R = gt[:, :3]
     gt_T = gt[:, 3:]
     pred_R = pred[:, :3]
@@ -17,10 +17,10 @@ def pose_loss_norm(pred, gt, eps=1e-6):
     gt_T_unit = gt_T / norm_gt_T
 
     # Compute translation and rotation losses
-    trans_loss = F.l1_loss(pred_T_unit, gt_T_unit, reduction='mean')
-    rot_loss = F.l1_loss(pred_R, gt_R, reduction='mean')
+    trans_loss = F.l1_loss(pred_T_unit, gt_T_unit, reduction=reduction)
+    rot_loss = F.l1_loss(pred_R, gt_R, reduction=reduction)
 
-    return trans_loss + rot_loss
+    return lambda_t * trans_loss + lambda_r * rot_loss
 
 
 def get_ssim(img0, img1):

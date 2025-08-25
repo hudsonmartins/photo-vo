@@ -4,3 +4,6 @@
 [submodule "modvo"]
 	path = modvo
 	url = git@github.com:larocs/modvo.git
+[submodule "TimeSformer"]
+	path = TimeSformer
+	url = https://github.com/hudsonmartins/TimeSformer.git
