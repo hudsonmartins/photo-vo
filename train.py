@@ -218,6 +218,9 @@ def main(args):
         
         for param in model.imgenc.vit.blocks[-conf.vit.unfreeze_last:].parameters():
             param.requires_grad = True
+            
+        for param in model.imgenc.adapter.parameters(): 
+            param.requires_grad = True
 
     if(conf.features_model.freeze):
         logger.info("Freezing the features model")
